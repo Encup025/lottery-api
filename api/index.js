@@ -4,51 +4,43 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 
 const app = express();
-
 app.use(cors());
 
 app.get('/', (req, res) => {
-    res.json({
-        status: "success",
-        message: "LotteryUSA Scraper API is running on Render!",
-        endpoints: { all_markets: "/api/markets" }
-    });
+    res.json({ message: "API is running!" });
 });
 
 app.get('/api/markets', async (req, res) => {
     try {
+        // Menggunakan header palsu agar terlihat lebih seperti browser asli
         const response = await axios.get('https://www.lotteryusa.com/', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5'
+            }
         });
 
         const $ = cheerio.load(response.data);
+        
+        // MENDETEKSI APA YANG DILIHAT SERVER
+        const pageTitle = $('title').text().trim();
+        
+        // Mencoba mengambil data dengan cara kasar (mencari semua class yang mungkin)
         const markets = [];
-
-        $('.c-state-results__item, .game-card, .lottery-item').each((index, element) => {
-            const name = $(element).find('.c-game-title, .game-name, h3').text().trim();
-            const jackpot = $(element).find('.c-jackpot, .jackpot, .prize').text().trim() || "N/A";
-            const date = $(element).find('.c-draw-date, .date, time').text().trim() || "N/A";
-            
-            const numbers = [];
-            $(element).find('.c-ball, .ball, .number').each((i, el) => {
-                const num = $(el).text().trim();
-                if(num) numbers.push(num);
-            });
-
+        $('.state-results, .result, .game, article, .draw-result').each((index, element) => {
+            const name = $(element).find('h2, h3, .name, .title').first().text().trim();
             if (name) {
-                markets.push({
-                    name: name,
-                    jackpot: jackpot,
-                    date: date,
-                    numbers: numbers.length > 0 ? numbers : ["Data belum tersedia"]
-                });
+                markets.push({ nama_pasaran: name });
             }
         });
 
         res.json({
-            status: "success",
-            source: "https://www.lotteryusa.com",
-            updated_at: new Date().toISOString(),
+            status: "sukses",
+            debug_info: {
+                judul_halaman_yang_ditangkap: pageTitle,
+                ukuran_data: response.data.length
+            },
             total: markets.length,
             data: markets
         });
@@ -58,7 +50,5 @@ app.get('/api/markets', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server API berjalan di port ${PORT}`);
-});
+// Wajib untuk Vercel
+module.exports = app;
