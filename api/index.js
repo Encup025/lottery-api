@@ -6,52 +6,77 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
+// --- FUNGSI BANTUAN: MENDAPATKAN WAKTU WIB ---
+// Karena Vercel menggunakan server global (UTC), kita paksa konversi ke WIB (Asia/Jakarta)
+function dapatkanWaktuWIB() {
+    const opsi = { 
+        timeZone: 'Asia/Jakarta', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false // Menggunakan format 24 jam
+    };
+    // Hasilnya akan seperti: "16 Oktober 2026, 01:54:00 WIB"
+    return new Date().toLocaleString('id-ID', opsi) + " WIB";
+}
+
+
 // --- HALAMAN DEPAN API ---
 app.get('/', (req, res) => {
     res.json({
         status: "success",
         message: "API Scraper LotteryUSA is Active!",
+        waktu_server_wib: dapatkanWaktuWIB(),
         endpoints: { 
             semua_pasaran_utama: "/api/markets",
-            pasaran_spesifik: "/api/result/:state/:game" // CONTOH: /api/result/kentucky/pick-4
+            pasaran_spesifik: "/api/result/:state/:game"
         }
     });
 });
 
-// --- FITUR BARU: AMBIL PASARAN SPESIFIK (Contoh: Kentucky Pick 4) ---
+
+// --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: Kentucky Pick 4) ---
 app.get('/api/result/:state/:game', async (req, res) => {
-    // Menangkap nama state dan game dari URL API Anda
     const state = req.params.state;
     const game = req.params.game;
-    
-    // Merakit URL target sesuai dengan format LotteryUSA
     const targetUrl = `https://www.lotteryusa.com/${state}/${game}/`;
 
     try {
         const response = await axios.get(targetUrl, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
                 'Accept-Language': 'en-US,en;q=0.9'
             }
         });
 
         const $ = cheerio.load(response.data);
         
-        // 1. Ambil Nama Pasaran dari Judul Halaman (tag h1)
+        // 1. Ambil Nama Pasaran & Bersihkan Spasi
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
-        // Bersihkan kata "winning numbers" agar namanya lebih rapi
-        namaPasaran = namaPasaran.replace(/winning numbers/i, '').trim();
+        namaPasaran = namaPasaran.replace(/winning numbers/i, '');
+        namaPasaran = namaPasaran.replace(/\s+/g, ' ').trim(); // Menghapus enter (\n) dan tab (\t)
         
-        // 2. Ambil Tanggal Undian (dari tag <time> pertama di halaman)
-        let tanggal = $('time').first().text().trim() || "Belum diundi";
+        // 2. Ambil Tanggal Undian (Dari website LotteryUSA)
+        let tanggalWeb = "";
+        let timeText = $('time').first().text().trim();
         
+        if (timeText) {
+             tanggalWeb = timeText;
+        } else {
+             tanggalWeb = $('[class*="date"]').first().text().trim();
+        }
+
+        // Catatan waktu aktual (WIB) saat data ditarik oleh bot Anda
+        const tanggalWIB = dapatkanWaktuWIB();
+
         // 3. Ambil Angka Keluar Terbaru
         let angka_keluar = [];
-        // Kita cari bola angka pertama yang muncul (karena itu pasti hasil draw terbaru)
         const bolaPertama = $('[class*="ball"]').first();
         
         if (bolaPertama.length > 0) {
-            // Naik ke elemen pembungkusnya, lalu ambil semua bola di dalam baris tersebut
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
                 if (angka && angka.length <= 3) {
@@ -65,25 +90,20 @@ app.get('/api/result/:state/:game', async (req, res) => {
             sumber: targetUrl,
             data: {
                 pasaran: namaPasaran,
-                tanggal_undian: tanggal,
+                tanggal_web_usa: tanggalWeb, // Apa yang tertulis di web target (misal: "Today at...")
+                tanggal_ditarik_wib: tanggalWIB, // Waktu aktual scraping dalam WIB
                 angka_keluar: angka_keluar
             }
         });
 
     } catch (error) {
-        // Jika link salah atau halaman tidak ditemukan
-        res.status(500).json({ 
-            status: "error", 
-            pesan: "Gagal mengambil data. Pastikan nama state dan game benar (contoh: kentucky dan pick-4)", 
-            url_target: targetUrl,
-            detail: error.message 
-        });
+        res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
     }
 });
 
-// --- FITUR LAMA: AMBIL PASARAN UTAMA ---
+
+// --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
-    // (Kode pembersih yang sudah berhasil tadi tetap ada di sini)
     try {
         const response = await axios.get('https://www.lotteryusa.com/', {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
@@ -123,7 +143,12 @@ app.get('/api/markets', async (req, res) => {
             }
         });
 
-        res.json({ status: "sukses", waktu_update: new Date().toISOString(), total_pasaran: markets.length, data: markets });
+        res.json({ 
+            status: "sukses", 
+            waktu_update_wib: dapatkanWaktuWIB(), // Memakai format WIB 
+            total_pasaran: markets.length, 
+            data: markets 
+        });
     } catch (error) {
         res.status(500).json({ status: "error", pesan: error.message });
     }
