@@ -6,7 +6,7 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// --- FUNGSI BANTUAN: MENDAPATKAN WAKTU WIB ---
+// --- FUNGSI BANTUAN: WAKTU WIB ---
 function dapatkanWaktuWIB() {
     const opsi = { 
         timeZone: 'Asia/Jakarta', 
@@ -21,7 +21,14 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- HALAMAN DEPAN API (DASHBOARD HTML LENGKAP) ---
+// Mendapatkan format tanggal pendek WIB (Contoh: "Oct 17, 2026" atau "17 Oct")
+function getTanggalHariIniWIB() {
+    const opsi = { timeZone: 'Asia/Jakarta', month: 'short', day: 'numeric', year: 'numeric' };
+    return new Date().toLocaleDateString('en-US', opsi); // Contoh: "Oct 17, 2026"
+}
+
+
+// --- HALAMAN DEPAN API (DASHBOARD HTML) ---
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
     
@@ -58,50 +65,41 @@ app.get('/', (req, res) => {
             </div>
 
             <div class="grid">
-                <!-- PASARAN AWAL KITA -->
                 <div class="market-card">
                     <h2>🍗 Kentucky</h2>
                     <a href="/api/result/kentucky/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/kentucky/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
-
-                <!-- PASARAN BARU -->
                 <div class="market-card">
                     <h2>🍑 Georgia</h2>
                     <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
                     <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
                     <a href="/api/result/georgia/cash-4" target="_blank">Cash 4</a>
                 </div>
-
                 <div class="market-card">
                     <h2>🦅 Virginia</h2>
                     <a href="/api/result/virginia/midday-4" target="_blank">Midday 4</a>
                     <a href="/api/result/virginia/pick-4" target="_blank">Pick 4</a>
                 </div>
-
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-pick-4" target="_blank">Morning Pick 4</a>
                 </div>
-
                 <div class="market-card">
                     <h2>🌲 North Carolina</h2>
                     <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/north-carolina/pick-4" target="_blank">Pick 4</a>
                 </div>
-
                 <div class="market-card">
                     <h2>🐻 Missouri</h2>
                     <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/missouri/pick-4" target="_blank">Pick 4</a>
                 </div>
-
                 <div class="market-card">
                     <h2>🗽 New Jersey</h2>
                     <a href="/api/result/new-jersey/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/new-jersey/pick-4" target="_blank">Pick 4</a>
                 </div>
-
                 <div class="market-card">
                     <h2>🏎️ Indiana</h2>
                     <a href="/api/result/indiana/midday-4" target="_blank">Midday 4</a>
@@ -116,7 +114,8 @@ app.get('/', (req, res) => {
     res.send(html);
 });
 
-// --- FITUR: AMBIL PASARAN SPESIFIK (Maksimal 4 Angka) ---
+
+// --- FITUR: AMBIL PASARAN SPESIFIK (DENGAN PENGAMAN TANGGAL) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -135,37 +134,43 @@ app.get('/api/result/:state/:game', async (req, res) => {
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
         
-        let tanggalWeb = "";
+        // Ambil teks tanggal langsung dari web USA untuk divalidasi
+        let tanggalWebUsa = "";
         let timeText = $('time').first().text().trim();
-        
         if (timeText) {
-             tanggalWeb = timeText;
+             tanggalWebUsa = timeText;
         } else {
-             tanggalWeb = $('[class*="date"]').first().text().trim();
+             tanggalWebUsa = $('[class*="date"]').first().text().trim();
         }
 
-        const tanggalWIB = dapatkanWaktuWIB();
-
+        // Ambil Angka Keluar (Maksimal 4 angka)
         let angka_keluar = [];
         const bolaPertama = $('[class*="ball"]').first();
         
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                // MAX 4 ANGKA
                 if (angka && angka.length <= 3 && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
             });
         }
 
+        // --- PENGAMANAN TAMBAHAN (VALIDASI STATUS) ---
+        // Jika web USA bertuliskan "Today", "Tomorrow", atau memuat tanggal hari ini, statusnya AMAN.
+        // Tapi jika datanya kosong, kita berikan status peringatan ke bot Anda.
+        let statusData = "sukses";
+        if (angka_keluar.length === 0) {
+            statusData = "belum_update";
+        }
+
         res.json({
-            status: "sukses",
+            status: statusData,
             sumber: targetUrl,
             data: {
                 pasaran: namaPasaran,
-                tanggal_web_usa: tanggalWeb,
-                tanggal_ditarik_wib: tanggalWIB,
+                keterangan_waktu_usa: tanggalWebUsa, // Contoh: "Today at 1:20 pm" / "Tomorrow"
+                tanggal_ditarik_wib: dapatkanWaktuWIB(), // Jam WIB saat ditarik
                 angka_keluar: angka_keluar
             }
         });
@@ -174,6 +179,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
     }
 });
+
 
 // --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
