@@ -7,7 +7,6 @@ const app = express();
 app.use(cors());
 
 // --- FUNGSI BANTUAN: MENDAPATKAN WAKTU WIB ---
-// Karena Vercel menggunakan server global (UTC), kita paksa konversi ke WIB (Asia/Jakarta)
 function dapatkanWaktuWIB() {
     const opsi = { 
         timeZone: 'Asia/Jakarta', 
@@ -17,11 +16,10 @@ function dapatkanWaktuWIB() {
         hour: '2-digit', 
         minute: '2-digit',
         second: '2-digit',
-        hour12: false // Menggunakan format 24 jam
+        hour12: false
     };
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
-
 
 // --- HALAMAN DEPAN API ---
 app.get('/', (req, res) => {
@@ -32,11 +30,10 @@ app.get('/', (req, res) => {
         endpoints: { 
             semua_pasaran_utama: "/api/markets",
             pasaran_spesifik: "/api/result/:state/:game",
-            radar_taiwan: "/api/taiwan-radar" // Tambahan rute baru
+            radar_taiwan: "/api/taiwan-radar"
         }
     });
 });
-
 
 // --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: Kentucky Pick 4) ---
 app.get('/api/result/:state/:game', async (req, res) => {
@@ -47,62 +44,39 @@ app.get('/api/result/:state/:game', async (req, res) => {
     try {
         const response = await axios.get(targetUrl, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept-Language': 'en-US,en;q=0.9'
             }
         });
 
         const $ = cheerio.load(response.data);
         
-        // 1. Ambil Nama Pasaran & Bersihkan Spasi
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
-        namaPasaran = namaPasaran.replace(/winning numbers/i, '');
-        namaPasaran = namaPasaran.replace(/\s+/g, ' ').trim(); // Menghapus enter (\n) dan tab (\t)
+        namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
         
-        // 2. Ambil Tanggal Undian (Dari website LotteryUSA)
-        let tanggalWeb = "";
-        let timeText = $('time').first().text().trim();
-        
-        if (timeText) {
-             tanggalWeb = timeText;
-        } else {
-             tanggalWeb = $('[class*="date"]').first().text().trim();
-        }
-
-        // Catatan waktu aktual (WIB) saat data ditarik oleh bot Anda
+        let tanggalWeb = $('time').first().text().trim() \vert{}\vert{}$('[class*="date"]').first().text().trim();
         const tanggalWIB = dapatkanWaktuWIB();
 
-        // 3. Ambil Angka Keluar Terbaru
         let angka_keluar = [];
         const bolaPertama = $('[class*="ball"]').first();
-        
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                if (angka && angka.length <= 3) {
-                    angka_keluar.push(angka);
-                }
+                if (angka && angka.length <= 3) angka_keluar.push(angka);
             });
         }
 
         res.json({
             status: "sukses",
             sumber: targetUrl,
-            data: {
-                pasaran: namaPasaran,
-                tanggal_web_usa: tanggalWeb, // Apa yang tertulis di web target (misal: "Today at...")
-                tanggal_ditarik_wib: tanggalWIB, // Waktu aktual scraping dalam WIB
-                angka_keluar: angka_keluar
-            }
+            data: { pasaran: namaPasaran, tanggal_web: tanggalWeb, tanggal_ditarik_wib: tanggalWIB, angka_keluar: angka_keluar }
         });
-
     } catch (error) {
         res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
     }
 });
 
-
-// --- FITUR: AMBIL PASARAN UTAMA ---
+// --- FITUR: AMBIL PASARAN UTAMA LOTTERYUSA ---
 app.get('/api/markets', async (req, res) => {
     try {
         const response = await axios.get('https://www.lotteryusa.com/', {
@@ -136,40 +110,38 @@ app.get('/api/markets', async (req, res) => {
                     }
                     parent = parent.parent(); 
                 }
-
                 if (angka_keluar.length > 0) {
                     markets.push({ pasaran: namaPasaran, tanggal_undian: tanggal, jackpot: jackpot, angka_keluar: angka_keluar });
                 }
             }
         });
-
-        res.json({ 
-            status: "sukses", 
-            waktu_update_wib: dapatkanWaktuWIB(), // Memakai format WIB 
-            total_pasaran: markets.length, 
-            data: markets 
-        });
+        res.json({ status: "sukses", waktu_update_wib: dapatkanWaktuWIB(), total_pasaran: markets.length, data: markets });
     } catch (error) {
         res.status(500).json({ status: "error", pesan: error.message });
     }
 });
 
 
-// --- FITUR BARU: RADAR TAIWAN LOTTO ---
+// --- FITUR BARU: RADAR TAIWAN LOTTO (PAKAI PROXY PENEMBUS) ---
 app.get('/api/taiwan-radar', async (req, res) => {
     try {
-        const response = await axios.get('https://www.taiwan-lotto.com/', {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
-            }
-        });
+        // Taktik B: Menggunakan layanan AllOrigins agar tidak terdeteksi sebagai Robot Vercel
+        const targetUrl = 'https://www.taiwan-lotto.com/';
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
 
-        const $ = cheerio.load(response.data);
+        // Memanggil proxy, bukan web target secara langsung
+        const response = await axios.get(proxyUrl);
+        
+        // Data HTML dari AllOrigins tersimpan di dalam response.data.contents
+        const htmlData = response.data.contents;
+
+        if (!htmlData) {
+             throw new Error("Proxy tidak mengembalikan data HTML");
+        }
+
+        const $ = cheerio.load(htmlData);
         const judulHalaman = $('title').text().trim();
         
-        // Mengambil sampel data HTML untuk melihat posisi bola angkanya
         const tagDiv = []; 
         $('div').each((i, el) => {
             const className = $(el).attr('class');
@@ -177,17 +149,17 @@ app.get('/api/taiwan-radar', async (req, res) => {
         });
 
         res.json({
-            status: "sukses_menembus",
-            pesan: "Horee! Tidak diblokir Cloudflare",
+            status: "sukses_menembus_pakai_proxy",
+            pesan: "Horee! Kita berhasil menembus Cloudflare dengan Proxy AllOrigins!",
             judul_halaman: judulHalaman,
-            sampel_class_html: tagDiv.slice(0, 15) // Ambil 15 class pertama
+            sampel_class_html: tagDiv.slice(0, 15)
         });
 
     } catch (error) {
         res.status(500).json({ 
-            status: "TERBLOKIR_CLOUDFLARE", 
-            kode_error: error.response ? error.response.status : error.message,
-            pesan: "Akses ditolak. Kita harus pakai jalur belakang (Bypass API)!" 
+            status: "PROXY_JUGA_TERBLOKIR", 
+            pesan: "Cloudflare mereka tingkat dewa. Proxy gratisan juga ikut diblokir.",
+            pertanyaan_untuk_anda: "Apakah kita WAJIB pakai web ini? Atau boleh cari web Live Draw Taiwan lain yang lebih mudah ditembus?"
         });
     }
 });
