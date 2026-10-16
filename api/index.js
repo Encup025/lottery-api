@@ -122,44 +122,47 @@ app.get('/api/markets', async (req, res) => {
 });
 
 
-// --- FITUR BARU: RADAR TAIWAN LOTTO (PAKAI PROXY PENEMBUS) ---
+// --- FITUR BARU: RADAR TAIWAN LOTTO (PAKAI SCRAPER API) ---
 app.get('/api/taiwan-radar', async (req, res) => {
     try {
-        // Taktik B: Menggunakan layanan AllOrigins agar tidak terdeteksi sebagai Robot Vercel
         const targetUrl = 'https://www.taiwan-lotto.com/';
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-
-        // Memanggil proxy, bukan web target secara langsung
-        const response = await axios.get(proxyUrl);
+        const apiKey = '0e888f5e8fbf6c89a96da30cedd5d406';
         
-        // Data HTML dari AllOrigins tersimpan di dalam response.data.contents
-        const htmlData = response.data.contents;
+        // Merakit URL ScraperAPI (Ninja Penembus Cloudflare)
+        const scraperApiUrl = `http://api.scraperapi.com?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}`;
 
-        if (!htmlData) {
-             throw new Error("Proxy tidak mengembalikan data HTML");
-        }
-
-        const $ = cheerio.load(htmlData);
+        const response = await axios.get(scraperApiUrl);
+        const $ = cheerio.load(response.data);
+        
         const judulHalaman = $('title').text().trim();
         
-        const tagDiv = []; 
-        $('div').each((i, el) => {
-            const className = $(el).attr('class');
-            if(className) tagDiv.push(className);
+        // Kita tangkap teks h1 dan h2 untuk melihat struktur datanya
+        const tagH1 = []; $('h1').each((i, el) => tagH1.push($(el).text().trim()));
+        const tagH2 = []; $('h2').each((i, el) => tagH2.push($(el).text().trim()));
+        
+        // Cek apakah ada elemen dengan tulisan bola/angka
+        const sampelTeks = [];
+        $('div, span').each((i, el) => {
+            const teks = $(el).text().trim();
+            if (teks.length > 0 && teks.length < 5 && !isNaN(teks)) {
+                sampelTeks.push(teks);
+            }
         });
 
         res.json({
-            status: "sukses_menembus_pakai_proxy",
-            pesan: "Horee! Kita berhasil menembus Cloudflare dengan Proxy AllOrigins!",
+            status: "sukses_menembus_pakai_scraperapi",
+            pesan: "Luar biasa! Cloudflare berhasil dihancurkan oleh ScraperAPI!",
             judul_halaman: judulHalaman,
-            sampel_class_html: tagDiv.slice(0, 15)
+            judul_h1_ditemukan: tagH1,
+            judul_h2_ditemukan: tagH2,
+            potensi_angka_ditemukan: sampelTeks.slice(0, 10) // Tampilkan 10 angka pertama
         });
 
     } catch (error) {
         res.status(500).json({ 
-            status: "PROXY_JUGA_TERBLOKIR", 
-            pesan: "Cloudflare mereka tingkat dewa. Proxy gratisan juga ikut diblokir.",
-            pertanyaan_untuk_anda: "Apakah kita WAJIB pakai web ini? Atau boleh cari web Live Draw Taiwan lain yang lebih mudah ditembus?"
+            status: "GAGAL", 
+            pesan: "ScraperAPI gagal memuat (mungkin timeout karena Vercel membatasi waktu 10 detik).",
+            detail: error.message
         });
     }
 });
