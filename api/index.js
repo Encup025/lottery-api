@@ -6,7 +6,22 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// --- FUNGSI: TANGGAL WIB FORMAT INDONESIA (Sesuai Gambar) ---
+// --- FUNGSI BANTUAN 1: WAKTU WIB UNTUK ENDPOINT LAMA ---
+function dapatkanWaktuWIB() {
+    const opsi = { 
+        timeZone: 'Asia/Jakarta', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    };
+    return new Date().toLocaleString('id-ID', opsi) + " WIB";
+}
+
+// --- FUNGSI BANTUAN 2: TANGGAL WIB FORMAT CLEAN (Sesuai Gambar) ---
 function getTanggalWIB() {
     const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const bulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -14,38 +29,46 @@ function getTanggalWIB() {
     // Ambil waktu saat ini di zona WIB
     const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
     
-    const namaHari = hari[now.getDay()];
-    const tanggal = now.getDate();
-    const namaBulan = bulan[now.getMonth()];
-    const tahun = now.getFullYear();
-    
-    // Hasil: "Sabtu, 17 Oktober 2026"
-    return `${namaHari}, ${tanggal} ${namaBulan} ${tahun}`;
+    return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
 
-// --- HALAMAN DEPAN API (DASHBOARD HTML) ---
+
+// --- HALAMAN DEPAN API (DASHBOARD HTML - Dipertahankan) ---
 app.get('/', (req, res) => {
+    const waktuWIB = dapatkanWaktuWIB();
+    
     const html = `
     <!DOCTYPE html>
     <html lang="id">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Dashboard API Live Draw USA</title>
+        <title>Dashboard API LotteryUSA</title>
         <style>
-            body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
             .container { max-width: 900px; margin: 0 auto; }
-            h1 { color: #00e676; text-align: center; margin-bottom: 30px; }
+            h1 { color: #00e676; text-align: center; margin-bottom: 5px; }
+            .waktu { text-align: center; color: #aaaaaa; margin-bottom: 30px; font-size: 1.1em; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333;}
             .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
             .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
             .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
             a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; transition: 0.3s; text-align: center; }
             a:hover { background: #ff9800; color: #121212; }
+            .btn-utama { background: #d32f2f; color: white; border-left: 5px solid #d32f2f; }
+            .btn-utama a { color: white; background: #b71c1c; }
+            .btn-utama a:hover { background: #ff5252; color: white;}
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Server API Live Draw USA (Clean)</h1>
+            <h1>🚀 Server API Live Draw</h1>
+            <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
+
+            <div class="market-card btn-utama" style="margin-bottom: 20px;">
+                <h2 style="color:white;">🌐 Pasaran Nasional</h2>
+                <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
+            </div>
+
             <div class="grid">
                 <div class="market-card">
                     <h2>🍗 Kentucky</h2>
@@ -56,6 +79,7 @@ app.get('/', (req, res) => {
                     <h2>🍑 Georgia</h2>
                     <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
                     <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
+                    <a href="/api/result/georgia/cash-4" target="_blank">Cash 4</a>
                 </div>
                 <div class="market-card">
                     <h2>🦅 Virginia</h2>
@@ -67,24 +91,36 @@ app.get('/', (req, res) => {
                     <a href="/api/result/texas/morning-pick-4" target="_blank">Morning Pick 4</a>
                 </div>
                 <div class="market-card">
+                    <h2>🌲 North Carolina</h2>
+                    <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/north-carolina/pick-4" target="_blank">Pick 4</a>
+                </div>
+                <div class="market-card">
                     <h2>🐻 Missouri</h2>
                     <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/missouri/pick-4" target="_blank">Pick 4</a>
                 </div>
                 <div class="market-card">
-                    <h2>🗽 New Jersey & Indiana</h2>
-                    <a href="/api/result/new-jersey/pick-4" target="_blank">NJ Pick 4</a>
-                    <a href="/api/result/indiana/daily-4" target="_blank">IN Daily 4</a>
+                    <h2>🗽 New Jersey</h2>
+                    <a href="/api/result/new-jersey/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/new-jersey/pick-4" target="_blank">Pick 4</a>
+                </div>
+                <div class="market-card">
+                    <h2>🏎️ Indiana</h2>
+                    <a href="/api/result/indiana/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/indiana/daily-4" target="_blank">Daily 4</a>
                 </div>
             </div>
         </div>
     </body>
     </html>
     `;
+    
     res.send(html);
 });
 
-// --- FITUR: AMBIL RESULT (SANGAT CLEAN & ANTI-BASI) ---
+
+// --- FITUR: AMBIL PASARAN SPESIFIK (CLEAN & ANTI-BASI KETAT) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -93,28 +129,37 @@ app.get('/api/result/:state/:game', async (req, res) => {
     try {
         const response = await axios.get(targetUrl, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept-Language': 'en-US,en;q=0.9'
             }
         });
 
         const $ = cheerio.load(response.data);
         
-        // Ambil Nama Pasaran
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
-        namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
+        namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
         
-        // Ambil Teks Tanggal Web USA untuk deteksi basi (Yesterday/Kemarin)
-        let timeText = $('time').first().text().trim().toLowerCase();
-        if (!timeText) {
-             timeText = $('[class*="date"]').first().text().trim().toLowerCase();
+        // PENGAMAN 1: Kunci pencarian hanya pada blok hasil teratas! 
+        // (Ini mencegah bot ngambil angka sisa kemarin di bagian bawah halaman)
+        const blokResultTeratas = $('.c-game-components').first().length > 0 
+            ? $('.c-game-components').first() 
+            : $('main').first();
+
+        // Ambil keterangan waktu
+        let tanggalWebUsa = "";
+        let timeText = blokResultTeratas.find('time').first().text().trim();
+        if (timeText) {
+             tanggalWebUsa = timeText.toLowerCase();
+        } else {
+             tanggalWebUsa = blokResultTeratas.find('[class*="date"]').first().text().trim().toLowerCase();
         }
 
-        // Ambil Angka
+        // Ambil Angka Keluar (Hanya dari blok paling atas)
         let angka_keluar = [];
-        const containerBola = $('[class*="ball"]').first();
-        if (containerBola.length > 0) {
-            containerBola.parent().find('[class*="ball"]').each((i, el) => {
+        const bolaPertama = blokResultTeratas.find('[class*="ball"]').first();
+        
+        if (bolaPertama.length > 0) {
+            bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
                 if (angka && angka.length <= 2 && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
@@ -122,36 +167,82 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // --- FILTER KETAT ANTI-BASI & BELUM RESULT ---
-        const pageText = $('body').text().toLowerCase();
+        // --- PENGAMAN 2: CEK STATUS BASI / BELUM RESULT ---
+        // Jika blok teratas bertuliskan "Today at..." atau angka kosong / strip
+        const textLengkap = blokResultTeratas.text().toLowerCase();
+        const isJadwalMendatang = textLengkap.includes('upcoming') || textLengkap.includes('pending') || tanggalWebUsa.includes('at');
+        const isKosong = angka_keluar.length === 0 || angka_keluar.includes('--');
         
-        const isBasiAtauBelumResult = 
-            angka_keluar.length === 0 || 
-            angka_keluar.includes('--') ||
-            pageText.includes('upcoming') || 
-            pageText.includes('pending') || 
-            timeText.includes('yesterday'); // Jika web USA masih mencantumkan tanggal "Yesterday", tolak datanya.
-
-        if (isBasiAtauBelumResult) {
+        if (isJadwalMendatang || isKosong) {
             return res.json({
                 status: "belum_update",
                 pesan: "Data masih basi atau belum result."
             });
         }
 
-        // --- JIKA DATA FRESH & BERHASIL ---
-        // Format angka digabung, misal ["3", "2", "5", "9"] jadi "3259"
-        const resultAngka = angka_keluar.join(""); 
-
+        // --- HASIL CLEAN (JIKA LOLOS PENGAMAN) ---
         res.json({
             status: "sukses",
-            pasaran: namaPasaran.toUpperCase(),
+            pasaran: namaPasaran,
             tanggal_wib: getTanggalWIB(),
-            angka_keluar: resultAngka
+            angka_keluar: angka_keluar.join("") // Array diubah langsung menjadi gabungan angka: "1766"
         });
 
     } catch (error) {
-        res.status(500).json({ status: "error", pesan: "Gagal memproses", detail: error.message });
+        res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
+    }
+});
+
+
+// --- FITUR: AMBIL PASARAN UTAMA (Dipertahankan seperti asli) ---
+app.get('/api/markets', async (req, res) => {
+    try {
+        const response = await axios.get('https://www.lotteryusa.com/', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+        });
+        const $ = cheerio.load(response.data);
+        const markets = [];
+        const bukanLotre = ['PLAY', 'Play online', 'Daily game stats', 'On this day'];
+
+        $('h3').each((index, element) => {
+            const namaPasaran = $(element).text().trim();
+            if (namaPasaran && !bukanLotre.includes(namaPasaran) && !namaPasaran.includes('?') && namaPasaran.length <= 25) {
+                let parent = $(element).parent();
+                let angka_keluar = [];
+                let tanggal = "Belum diundi";
+                let jackpot = "N/A";
+
+                for (let level = 0; level < 5; level++) {
+                    parent.find('[class*="ball"]').each((i, ballEl) => {
+                        const angka = $(ballEl).text().trim();
+                        if (angka && angka.length <= 3) angka_keluar.push(angka);
+                    });
+
+                    if (angka_keluar.length > 0) {
+                        tanggal = parent.find('time, [class*="date"]').first().text().trim() || tanggal;
+                        parent.find('[class*="jackpot"], [class*="prize"]').each((i, jpEl) => {
+                            const jpText = $(jpEl).text().trim();
+                            if(jpText && jpText.includes('$')) jackpot = jpText.replace(/\s+/g, ' ').trim();
+                        });
+                        break; 
+                    }
+                    parent = parent.parent(); 
+                }
+
+                if (angka_keluar.length > 0) {
+                    markets.push({ pasaran: namaPasaran, tanggal_undian: tanggal, jackpot: jackpot, angka_keluar: angka_keluar });
+                }
+            }
+        });
+
+        res.json({ 
+            status: "sukses", 
+            waktu_update_wib: dapatkanWaktuWIB(),
+            total_pasaran: markets.length, 
+            data: markets 
+        });
+    } catch (error) {
+        res.status(500).json({ status: "error", pesan: error.message });
     }
 });
 
