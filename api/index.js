@@ -21,7 +21,7 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- FUNGSI BANTUAN 2: TANGGAL WIB FORMAT CLEAN (Sesuai Gambar) ---
+// --- FUNGSI BANTUAN 2: TANGGAL WIB FORMAT CLEAN ---
 function getTanggalWIB() {
     const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const bulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -32,8 +32,7 @@ function getTanggalWIB() {
     return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
 
-
-// --- HALAMAN DEPAN API (DASHBOARD HTML - Dipertahankan) ---
+// --- HALAMAN DEPAN API (DASHBOARD HTML SUPER KOMPLIT) ---
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
     
@@ -43,16 +42,16 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Dashboard API LotteryUSA</title>
+        <title>Dashboard API Live Draw USA</title>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
-            .container { max-width: 900px; margin: 0 auto; }
+            .container { max-width: 1000px; margin: 0 auto; }
             h1 { color: #00e676; text-align: center; margin-bottom: 5px; }
             .waktu { text-align: center; color: #aaaaaa; margin-bottom: 30px; font-size: 1.1em; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333;}
             .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
             .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
             .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
-            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; transition: 0.3s; text-align: center; }
+            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; transition: 0.3s; text-align: center; font-size: 0.9em; }
             a:hover { background: #ff9800; color: #121212; }
             .btn-utama { background: #d32f2f; color: white; border-left: 5px solid #d32f2f; }
             .btn-utama a { color: white; background: #b71c1c; }
@@ -61,7 +60,7 @@ app.get('/', (req, res) => {
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Server API Live Draw</h1>
+            <h1>🚀 Server API Live Draw USA</h1>
             <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
 
             <div class="market-card btn-utama" style="margin-bottom: 20px;">
@@ -70,45 +69,89 @@ app.get('/', (req, res) => {
             </div>
 
             <div class="grid">
+                <!-- BARIS 1 -->
+                <div class="market-card">
+                    <h2>⭐ Texas</h2>
+                    <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
+                    <a href="/api/result/texas/day-daily-4" target="_blank">Day Daily 4</a>
+                    <a href="/api/result/texas/evening-daily-4" target="_blank">Evening Daily 4</a>
+                    <a href="/api/result/texas/night-daily-4" target="_blank">Night Daily 4</a>
+                </div>
+                <div class="market-card">
+                    <h2>🌲 Oregon</h2>
+                    <a href="/api/result/oregon/1-pm-pick-4" target="_blank">Oregon 3 (1 PM)</a>
+                    <a href="/api/result/oregon/4-pm-pick-4" target="_blank">Oregon 6 (4 PM)</a>
+                    <a href="/api/result/oregon/7-pm-pick-4" target="_blank">Oregon 9 (7 PM)</a>
+                    <a href="/api/result/oregon/10-pm-pick-4" target="_blank">Oregon 12 (10 PM)</a>
+                </div>
                 <div class="market-card">
                     <h2>🍗 Kentucky</h2>
                     <a href="/api/result/kentucky/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/kentucky/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
+
+                <!-- BARIS 2 -->
                 <div class="market-card">
-                    <h2>🍑 Georgia</h2>
-                    <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
-                    <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
-                    <a href="/api/result/georgia/cash-4" target="_blank">Cash 4</a>
+                    <h2>🍊 Florida</h2>
+                    <a href="/api/result/florida/pick-4-midday" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/florida/pick-4-evening" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🗽 New York</h2>
+                    <a href="/api/result/new-york/midday-win-4" target="_blank">Midday Win 4</a>
+                    <a href="/api/result/new-york/win-4" target="_blank">Win 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🏛️ Washington DC</h2>
+                    <a href="/api/result/washington-dc/dc-4-midday" target="_blank">DC-4 Midday</a>
+                    <a href="/api/result/washington-dc/dc-4" target="_blank">DC-4 Evening</a>
+                </div>
+
+                <!-- BARIS 3 -->
+                <div class="market-card">
+                    <h2>🌲 North Carolina</h2>
+                    <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/north-carolina/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
                     <h2>🦅 Virginia</h2>
                     <a href="/api/result/virginia/midday-4" target="_blank">Midday 4</a>
-                    <a href="/api/result/virginia/pick-4" target="_blank">Pick 4</a>
+                    <a href="/api/result/virginia/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
-                    <h2>⭐ Texas</h2>
-                    <a href="/api/result/texas/morning-pick-4" target="_blank">Morning Pick 4</a>
+                    <h2>🍑 Georgia</h2>
+                    <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
                 </div>
-                <div class="market-card">
-                    <h2>🌲 North Carolina</h2>
-                    <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
-                    <a href="/api/result/north-carolina/pick-4" target="_blank">Pick 4</a>
-                </div>
+
+                <!-- BARIS 4 -->
                 <div class="market-card">
                     <h2>🐻 Missouri</h2>
                     <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
-                    <a href="/api/result/missouri/pick-4" target="_blank">Pick 4</a>
+                    <a href="/api/result/missouri/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
-                    <h2>🗽 New Jersey</h2>
-                    <a href="/api/result/new-jersey/midday-pick-4" target="_blank">Midday Pick 4</a>
-                    <a href="/api/result/new-jersey/pick-4" target="_blank">Pick 4</a>
+                    <h2>🏎️ Indiana & NJ</h2>
+                    <a href="/api/result/indiana/midday-4" target="_blank">IN Midday 4</a>
+                    <a href="/api/result/indiana/daily-4" target="_blank">IN Daily 4</a>
+                    <a href="/api/result/new-jersey/midday-pick-4" target="_blank">NJ Midday Pick 4</a>
+                    <a href="/api/result/new-jersey/pick-4" target="_blank">NJ Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
-                    <h2>🏎️ Indiana</h2>
-                    <a href="/api/result/indiana/midday-4" target="_blank">Midday 4</a>
-                    <a href="/api/result/indiana/daily-4" target="_blank">Daily 4</a>
+                    <h2>🏖️ California</h2>
+                    <a href="/api/result/california/daily-4" target="_blank">Daily 4</a>
+                </div>
+                
+                <!-- BARIS 5 (Tambahan Baru) -->
+                <div class="market-card">
+                    <h2>🌵 Arizona</h2>
+                    <a href="/api/result/arizona/pick-4-midday" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/arizona/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🌽 Iowa</h2>
+                    <a href="/api/result/iowa/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/iowa/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
             </div>
         </div>
@@ -139,8 +182,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
         
-        // PENGAMAN 1: Kunci pencarian hanya pada blok hasil teratas! 
-        // (Ini mencegah bot ngambil angka sisa kemarin di bagian bawah halaman)
+        // PENGAMAN 1: Kunci pencarian hanya pada blok hasil teratas!
         const blokResultTeratas = $('.c-game-components').first().length > 0 
             ? $('.c-game-components').first() 
             : $('main').first();
@@ -168,9 +210,8 @@ app.get('/api/result/:state/:game', async (req, res) => {
         }
 
         // --- PENGAMAN 2: CEK STATUS BASI / BELUM RESULT ---
-        // Jika blok teratas bertuliskan "Today at..." atau angka kosong / strip
         const textLengkap = blokResultTeratas.text().toLowerCase();
-        const isJadwalMendatang = textLengkap.includes('upcoming') || textLengkap.includes('pending') || tanggalWebUsa.includes('at');
+        const isJadwalMendatang = textLengkap.includes('upcoming') || textLengkap.includes('pending') || tanggalWebUsa.includes('at') || tanggalWebUsa.includes('yesterday');
         const isKosong = angka_keluar.length === 0 || angka_keluar.includes('--');
         
         if (isJadwalMendatang || isKosong) {
@@ -180,12 +221,12 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // --- HASIL CLEAN (JIKA LOLOS PENGAMAN) ---
+        // --- HASIL CLEAN ---
         res.json({
             status: "sukses",
             pasaran: namaPasaran,
             tanggal_wib: getTanggalWIB(),
-            angka_keluar: angka_keluar.join("") // Array diubah langsung menjadi gabungan angka: "1766"
+            angka_keluar: angka_keluar.join("")
         });
 
     } catch (error) {
@@ -194,7 +235,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
 });
 
 
-// --- FITUR: AMBIL PASARAN UTAMA (Dipertahankan seperti asli) ---
+// --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
     try {
         const response = await axios.get('https://www.lotteryusa.com/', {
