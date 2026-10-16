@@ -21,17 +21,93 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- HALAMAN DEPAN API ---
+// --- HALAMAN DEPAN API (DIUBAH MENJADI DASHBOARD HTML) ---
 app.get('/', (req, res) => {
-    res.json({
-        status: "success",
-        message: "API Scraper LotteryUSA is Active!",
-        waktu_server_wib: dapatkanWaktuWIB(),
-        endpoints: { 
-            semua_pasaran_utama: "/api/markets",
-            pasaran_spesifik: "/api/result/:state/:game"
-        }
-    });
+    const waktuWIB = dapatkanWaktuWIB();
+    
+    // Tampilan Website HTML untuk mempermudah akses (Dashboard)
+    const html = `
+    <!DOCTYPE html>
+    <html lang="id">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dashboard API LotteryUSA</title>
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
+            .container { max-width: 800px; margin: 0 auto; }
+            h1 { color: #00e676; text-align: center; margin-bottom: 5px; }
+            .waktu { text-align: center; color: #aaaaaa; margin-bottom: 30px; font-size: 1.1em; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333;}
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+            .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
+            .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
+            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; transition: 0.3s; text-align: center; }
+            a:hover { background: #ff9800; color: #121212; }
+            .btn-utama { background: #d32f2f; color: white; border-left: 5px solid #d32f2f; }
+            .btn-utama a { color: white; background: #b71c1c; }
+            .btn-utama a:hover { background: #ff5252; color: white;}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 Server API Live Draw</h1>
+            <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
+
+            <div class="market-card btn-utama" style="margin-bottom: 20px;">
+                <h2 style="color:white;">🌐 Pasaran Nasional</h2>
+                <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
+            </div>
+
+            <div class="grid">
+                <div class="market-card">
+                    <h2>🍑 Georgia</h2>
+                    <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
+                    <a href="/api/result/georgia/cash-4" target="_blank">Cash 4</a>
+                </div>
+
+                <div class="market-card">
+                    <h2>🦅 Virginia</h2>
+                    <a href="/api/result/virginia/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/virginia/pick-4" target="_blank">Pick 4</a>
+                </div>
+
+                <div class="market-card">
+                    <h2>⭐ Texas</h2>
+                    <a href="/api/result/texas/morning-pick-4" target="_blank">Morning Pick 4</a>
+                </div>
+
+                <div class="market-card">
+                    <h2>🌲 North Carolina</h2>
+                    <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/north-carolina/pick-4" target="_blank">Pick 4</a>
+                </div>
+
+                <div class="market-card">
+                    <h2>🐻 Missouri</h2>
+                    <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/missouri/pick-4" target="_blank">Pick 4</a>
+                </div>
+
+                <div class="market-card">
+                    <h2>🗽 New Jersey</h2>
+                    <a href="/api/result/new-jersey/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/new-jersey/pick-4" target="_blank">Pick 4</a>
+                </div>
+
+                <div class="market-card">
+                    <h2>🏎️ Indiana</h2>
+                    <a href="/api/result/indiana/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/indiana/daily-4" target="_blank">Daily 4</a>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+    
+    // Mengirimkan HTML ke browser
+    res.send(html);
 });
 
 // --- FITUR: AMBIL PASARAN SPESIFIK (Mendukung semua link Pick 4, maksimal 4 angka) ---
@@ -71,8 +147,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
                 
-                // PERBAIKAN UTAMA: Membatasi array agar MAKSIMAL HANYA 4 ANGKA
-                // Jika web mengeluarkan bola tambahan (seperti Fireball/Wildball), akan otomatis dibuang
+                // Membatasi array agar MAKSIMAL HANYA 4 ANGKA
                 if (angka && angka.length <= 3 && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
