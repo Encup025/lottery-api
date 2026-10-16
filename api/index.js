@@ -21,7 +21,6 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-
 // --- HALAMAN DEPAN API ---
 app.get('/', (req, res) => {
     res.json({
@@ -35,8 +34,7 @@ app.get('/', (req, res) => {
     });
 });
 
-
-// --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: Kentucky Pick 4) ---
+// --- FITUR: AMBIL PASARAN SPESIFIK (Mendukung semua link Pick 4, maksimal 4 angka) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -53,8 +51,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         const $ = cheerio.load(response.data);
         
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
-        namaPasaran = namaPasaran.replace(/winning numbers/i, '');
-        namaPasaran = namaPasaran.replace(/\s+/g, ' ').trim();
+        namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
         
         let tanggalWeb = "";
         let timeText = $('time').first().text().trim();
@@ -73,7 +70,10 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                if (angka && angka.length <= 3) {
+                
+                // PERBAIKAN UTAMA: Membatasi array agar MAKSIMAL HANYA 4 ANGKA
+                // Jika web mengeluarkan bola tambahan (seperti Fireball/Wildball), akan otomatis dibuang
+                if (angka && angka.length <= 3 && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
             });
@@ -94,7 +94,6 @@ app.get('/api/result/:state/:game', async (req, res) => {
         res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
     }
 });
-
 
 // --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
