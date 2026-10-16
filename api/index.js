@@ -6,36 +6,29 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// --- FUNGSI BANTUAN: MENDAPATKAN WAKTU WIB ---
+// --- FUNGSI BANTUAN: WAKTU WIB ---
 function dapatkanWaktuWIB() {
     const opsi = { 
-        timeZone: 'Asia/Jakarta', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric', 
-        hour: '2-digit', 
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
+        timeZone: 'Asia/Jakarta', year: 'numeric', month: 'long', 
+        day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
     };
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- HALAMAN DEPAN API ---
+// --- HALAMAN DEPAN ---
 app.get('/', (req, res) => {
     res.json({
         status: "success",
-        message: "API Scraper LotteryUSA & Taiwan is Active!",
+        message: "API Scraper LotteryUSA is Active!",
         waktu_server_wib: dapatkanWaktuWIB(),
         endpoints: { 
             semua_pasaran_utama: "/api/markets",
-            pasaran_spesifik: "/api/result/:state/:game",
-            radar_taiwan: "/api/taiwan-radar"
+            pasaran_spesifik: "/api/result/:state/:game"
         }
     });
 });
 
-// --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: Kentucky Pick 4) ---
+// --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: kentucky/pick-4) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -43,19 +36,13 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
     try {
         const response = await axios.get(targetUrl, {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept-Language': 'en-US,en;q=0.9'
-            }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
         });
-
         const $ = cheerio.load(response.data);
         
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
-        
         let tanggalWeb = $('time').first().text().trim() \vert{}\vert{}$('[class*="date"]').first().text().trim();
-        const tanggalWIB = dapatkanWaktuWIB();
 
         let angka_keluar = [];
         const bolaPertama = $('[class*="ball"]').first();
@@ -67,20 +54,19 @@ app.get('/api/result/:state/:game', async (req, res) => {
         }
 
         res.json({
-            status: "sukses",
-            sumber: targetUrl,
-            data: { pasaran: namaPasaran, tanggal_web: tanggalWeb, tanggal_ditarik_wib: tanggalWIB, angka_keluar: angka_keluar }
+            status: "sukses", sumber: targetUrl,
+            data: { pasaran: namaPasaran, tanggal_web: tanggalWeb, tanggal_ditarik_wib: dapatkanWaktuWIB(), angka_keluar: angka_keluar }
         });
     } catch (error) {
         res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
     }
 });
 
-// --- FITUR: AMBIL PASARAN UTAMA LOTTERYUSA ---
+// --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
     try {
         const response = await axios.get('https://www.lotteryusa.com/', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
         });
         const $ = cheerio.load(response.data);
         const markets = [];
@@ -91,8 +77,7 @@ app.get('/api/markets', async (req, res) => {
             if (namaPasaran && !bukanLotre.includes(namaPasaran) && !namaPasaran.includes('?') && namaPasaran.length <= 25) {
                 let parent = $(element).parent();
                 let angka_keluar = [];
-                let tanggal = "Belum diundi";
-                let jackpot = "N/A";
+                let tanggal = "Belum diundi", jackpot = "N/A";
 
                 for (let level = 0; level < 5; level++) {
                     parent.find('[class*="ball"]').each((i, ballEl) => {
@@ -118,54 +103,6 @@ app.get('/api/markets', async (req, res) => {
         res.json({ status: "sukses", waktu_update_wib: dapatkanWaktuWIB(), total_pasaran: markets.length, data: markets });
     } catch (error) {
         res.status(500).json({ status: "error", pesan: error.message });
-    }
-});
-
-
-// --- FITUR BARU: RADAR TAIWAN MENGGUNAKAN API KEY ANDA ---
-app.get('/api/taiwan-radar', async (req, res) => {
-    try {
-        const targetUrl = 'https://livedrawtaiwan.info/';
-        const apiKey = '0e888f5e8fbf6c89a96da30cedd5d406';
-        
-        // Kita merakit link ScraperAPI. Sengaja TIDAK memakai premium=true agar prosesnya ngebut!
-        const scraperApiUrl = `http://api.scraperapi.com?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}`;
-
-        // Set batas waktu 9 detik saja agar Vercel tidak keburu Error 500
-        const response = await axios.get(scraperApiUrl, { timeout: 9000 });
-        
-        const $ = cheerio.load(response.data);
-        const judulHalaman = $('title').text().trim();
-        
-        // Menganalisa letak angka
-        const sampelData = [];
-        $('[class*="result"], [class*="angka"], [class*="nomor"], td, span, div').each((i, el) => {
-            const className = $(el).attr('class') || 'tanpa_class';
-            const teks = $(el).text().replace(/\s+/g, ' ').trim();
-            
-            // Mencari teks pendek berupa angka
-            if (teks.length > 0 && teks.length < 15 && !isNaN(teks.replace(/[^0-9]/g, ''))) {
-                sampelData.push({
-                    class_html: className,
-                    teks_di_dalamnya: teks
-                });
-            }
-        });
-
-        res.json({
-            status: "sukses_menembus_pakai_scraperapi",
-            pesan: "MANTAP! ScraperAPI berhasil membawa data dari livedrawtaiwan.info dengan cepat!",
-            judul_halaman: judulHalaman,
-            sampel_potensi_angka: sampelData.slice(0, 15) // Kita lihat 15 sampel pertama
-        });
-
-    } catch (error) {
-        // Jika masih gagal, kita akan tahu alasannya (apakah karena timeout atau karena hal lain)
-        res.status(500).json({ 
-            status: "GAGAL_MENGAMBIL", 
-            pesan: "Terjadi kendala saat memanggil ScraperAPI.",
-            detail_error: error.message
-        });
     }
 });
 
