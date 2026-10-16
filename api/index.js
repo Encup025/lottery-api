@@ -21,11 +21,10 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- HALAMAN DEPAN API (DIUBAH MENJADI DASHBOARD HTML) ---
+// --- HALAMAN DEPAN API (DASHBOARD HTML LENGKAP) ---
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
     
-    // Tampilan Website HTML untuk mempermudah akses (Dashboard)
     const html = `
     <!DOCTYPE html>
     <html lang="id">
@@ -35,10 +34,10 @@ app.get('/', (req, res) => {
         <title>Dashboard API LotteryUSA</title>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
-            .container { max-width: 800px; margin: 0 auto; }
+            .container { max-width: 900px; margin: 0 auto; }
             h1 { color: #00e676; text-align: center; margin-bottom: 5px; }
             .waktu { text-align: center; color: #aaaaaa; margin-bottom: 30px; font-size: 1.1em; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333;}
-            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
             .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
             .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
             a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; transition: 0.3s; text-align: center; }
@@ -59,6 +58,14 @@ app.get('/', (req, res) => {
             </div>
 
             <div class="grid">
+                <!-- PASARAN AWAL KITA -->
+                <div class="market-card">
+                    <h2>🍗 Kentucky</h2>
+                    <a href="/api/result/kentucky/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/kentucky/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+
+                <!-- PASARAN BARU -->
                 <div class="market-card">
                     <h2>🍑 Georgia</h2>
                     <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
@@ -106,11 +113,10 @@ app.get('/', (req, res) => {
     </html>
     `;
     
-    // Mengirimkan HTML ke browser
     res.send(html);
 });
 
-// --- FITUR: AMBIL PASARAN SPESIFIK (Mendukung semua link Pick 4, maksimal 4 angka) ---
+// --- FITUR: AMBIL PASARAN SPESIFIK (Maksimal 4 Angka) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -146,8 +152,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                
-                // Membatasi array agar MAKSIMAL HANYA 4 ANGKA
+                // MAX 4 ANGKA
                 if (angka && angka.length <= 3 && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
