@@ -122,31 +122,28 @@ app.get('/api/markets', async (req, res) => {
 });
 
 
-// --- FITUR BARU: RADAR TAIWAN TARGET BARU (livedrawtaiwan.info) ---
+// --- FITUR BARU: RADAR TAIWAN MENGGUNAKAN API KEY ANDA ---
 app.get('/api/taiwan-radar', async (req, res) => {
     try {
         const targetUrl = 'https://livedrawtaiwan.info/';
+        const apiKey = '0e888f5e8fbf6c89a96da30cedd5d406';
         
-        // Kita coba akses langsung tanpa ScraperAPI
-        // Menggunakan batas waktu 8 detik agar Vercel tidak Error 500
-        const response = await axios.get(targetUrl, {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
-            },
-            timeout: 8000 
-        });
+        // Kita merakit link ScraperAPI. Sengaja TIDAK memakai premium=true agar prosesnya ngebut!
+        const scraperApiUrl = `http://api.scraperapi.com?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}`;
+
+        // Set batas waktu 9 detik saja agar Vercel tidak keburu Error 500
+        const response = await axios.get(scraperApiUrl, { timeout: 9000 });
         
         const $ = cheerio.load(response.data);
         const judulHalaman = $('title').text().trim();
         
-        // Menganalisa letak bola-bola angka (mencari elemen yang mengandung kata result, angka, atau nomor)
+        // Menganalisa letak angka
         const sampelData = [];
-        $('[class*="result"], [class*="angka"], [class*="nomor"], td, span').each((i, el) => {
-            const className = $(el).attr('class') || 'tidak_ada_class';
+        $('[class*="result"], [class*="angka"], [class*="nomor"], td, span, div').each((i, el) => {
+            const className = $(el).attr('class') || 'tanpa_class';
             const teks = $(el).text().replace(/\s+/g, ' ').trim();
             
-            // Kita hanya ambil teks yang pendek (kemungkinan itu bola angka)
+            // Mencari teks pendek berupa angka
             if (teks.length > 0 && teks.length < 15 && !isNaN(teks.replace(/[^0-9]/g, ''))) {
                 sampelData.push({
                     class_html: className,
@@ -156,16 +153,17 @@ app.get('/api/taiwan-radar', async (req, res) => {
         });
 
         res.json({
-            status: "sukses_menembus_tanpa_api",
-            pesan: "Luar biasa! Vercel langsung berhasil masuk ke livedrawtaiwan.info dengan cepat!",
+            status: "sukses_menembus_pakai_scraperapi",
+            pesan: "MANTAP! ScraperAPI berhasil membawa data dari livedrawtaiwan.info dengan cepat!",
             judul_halaman: judulHalaman,
-            sampel_potensi_angka: sampelData.slice(0, 15) // Tampilkan 15 data pertama untuk kita analisa
+            sampel_potensi_angka: sampelData.slice(0, 15) // Kita lihat 15 sampel pertama
         });
 
     } catch (error) {
+        // Jika masih gagal, kita akan tahu alasannya (apakah karena timeout atau karena hal lain)
         res.status(500).json({ 
-            status: "GAGAL_ATAU_TERBLOKIR", 
-            pesan: "Gagal masuk. Entah karena Cloudflare atau webnya sedang down.",
+            status: "GAGAL_MENGAMBIL", 
+            pesan: "Terjadi kendala saat memanggil ScraperAPI.",
             detail_error: error.message
         });
     }
