@@ -35,8 +35,10 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const targetUrl = `https://www.lotteryusa.com/${state}/${game}/`;
 
     try {
+        // PERBAIKAN: Memasang Alarm 5 Detik (5000 ms) agar Vercel tidak Error 500
         const response = await axios.get(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            timeout: 5000 
         });
         const $ = cheerio.load(response.data);
         
@@ -58,15 +60,18 @@ app.get('/api/result/:state/:game', async (req, res) => {
             data: { pasaran: namaPasaran, tanggal_web: tanggalWeb, tanggal_ditarik_wib: dapatkanWaktuWIB(), angka_keluar: angka_keluar }
         });
     } catch (error) {
-        res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
+        // Jika gagal karena timeout atau diblokir, akan muncul pesan ini (bukan crash halaman putih)
+        res.status(500).json({ status: "error", pesan: "LotteryUSA gagal merespons atau memblokir IP", detail: error.message });
     }
 });
 
 // --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
     try {
+        // PERBAIKAN: Memasang Alarm 5 Detik
         const response = await axios.get('https://www.lotteryusa.com/', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+            timeout: 5000
         });
         const $ = cheerio.load(response.data);
         const markets = [];
@@ -102,7 +107,7 @@ app.get('/api/markets', async (req, res) => {
         });
         res.json({ status: "sukses", waktu_update_wib: dapatkanWaktuWIB(), total_pasaran: markets.length, data: markets });
     } catch (error) {
-        res.status(500).json({ status: "error", pesan: error.message });
+        res.status(500).json({ status: "error", pesan: "LotteryUSA gagal merespons atau memblokir IP", detail: error.message });
     }
 });
 
