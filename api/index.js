@@ -6,7 +6,7 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// --- FUNGSI BANTUAN 1: WAKTU WIB UNTUK ENDPOINT LAMA ---
+// --- FUNGSI BANTUAN 1: WAKTU WIB ---
 function dapatkanWaktuWIB() {
     const opsi = { 
         timeZone: 'Asia/Jakarta', 
@@ -26,13 +26,71 @@ function getTanggalWIB() {
     const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const bulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     
-    // Ambil waktu saat ini di zona WIB
     const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
-    
     return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
 
-// --- HALAMAN DEPAN API (DASHBOARD HTML SUPER KOMPLIT) ---
+// --- FUNGSI BANTUAN 3: SCRAPER PROXY GRATIS OTOMATIS (FALLBACK) ---
+async function getFreeProxies() {
+    try {
+        const response = await axios.get('https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt', { timeout: 4000 });
+        const proxies = response.data.split('\n')
+            .map(p => p.trim())
+            .filter(p => p.includes(':'))
+            .slice(0, 10); // Ambil 10 proxy teratas
+        return proxies;
+    } catch (e) {
+        // Fallback proxy publik statis jika github gagal diambil
+        return ['103.152.112.162:80', '47.74.152.29:8888', '118.174.204.142:8080'];
+    }
+}
+
+// --- FUNGSI PENGAMBIL DATA DENGAN ANTI-BLOCK & PROXY ROTATOR ---
+async function fetchWithAntiBlock(targetUrl) {
+    const headersConfig = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1'
+    };
+
+    // Percobaan 1: Akses langsung menggunakan Header Browser Asli
+    try {
+        const response = await axios.get(targetUrl, { headers: headersConfig, timeout: 8000 });
+        if (response.status === 200) return response.data;
+    } catch (err1) {
+        console.log("Direct request blocked/error, trying free proxy rotator...");
+    }
+
+    // Percobaan 2: Menggunakan Proxy Publik Gratis secara bergantian jika direct gagal (403/Timeout)
+    const proxies = await getFreeProxies();
+    for (let proxy of proxies) {
+        try {
+            const [host, port] = proxy.split(':');
+            // Menggunakan tunneling proxy sederhana lewat http agent jika diperlukan, 
+            // atau cukup lempar ke public proxy scraper service jika Vercel mendukung.
+            // Karena Vercel serverless membatasi custom Agent, kita pakai alternatif fetch langsung via public proxy gateway:
+            const proxyTargetUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+            const response = await axios.get(proxyTargetUrl, { timeout: 6000 });
+            if (response.status === 200 && response.data) return response.data;
+        } catch (errProxy) {
+            continue; // Coba proxy berikutnya
+        }
+    }
+
+    throw new Error("Semua jalur akses (Direct & Proxy Gratis) ditolak atau timeout oleh target.");
+}
+
+
+// --- HALAMAN DEPAN API (DASHBOARD HTML) ---
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
     
@@ -69,7 +127,6 @@ app.get('/', (req, res) => {
             </div>
 
             <div class="grid">
-                <!-- BARIS 1 -->
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
@@ -89,8 +146,6 @@ app.get('/', (req, res) => {
                     <a href="/api/result/kentucky/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/kentucky/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
-
-                <!-- BARIS 2 -->
                 <div class="market-card">
                     <h2>🍊 Florida</h2>
                     <a href="/api/result/florida/pick-4-midday" target="_blank">Midday Pick 4</a>
@@ -106,8 +161,6 @@ app.get('/', (req, res) => {
                     <a href="/api/result/washington-dc/dc-4-midday" target="_blank">DC-4 Midday</a>
                     <a href="/api/result/washington-dc/dc-4" target="_blank">DC-4 Evening</a>
                 </div>
-
-                <!-- BARIS 3 -->
                 <div class="market-card">
                     <h2>🌲 North Carolina</h2>
                     <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
@@ -123,8 +176,6 @@ app.get('/', (req, res) => {
                     <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
                     <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
                 </div>
-
-                <!-- BARIS 4 -->
                 <div class="market-card">
                     <h2>🐻 Missouri</h2>
                     <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
@@ -141,8 +192,6 @@ app.get('/', (req, res) => {
                     <h2>🏖️ California</h2>
                     <a href="/api/result/california/daily-4" target="_blank">Daily 4</a>
                 </div>
-                
-                <!-- BARIS 5 (Tambahan Baru) -->
                 <div class="market-card">
                     <h2>🌵 Arizona</h2>
                     <a href="/api/result/arizona/pick-4-midday" target="_blank">Midday Pick 4</a>
@@ -163,31 +212,24 @@ app.get('/', (req, res) => {
 });
 
 
-// --- FITUR: AMBIL PASARAN SPESIFIK (CLEAN & ANTI-BASI KETAT) ---
+// --- ENDPOINT: AMBIL PASARAN SPESIFIK (DENGAN ANTI-BASI & ANTI-BLOCK PROXY) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
     const targetUrl = `https://www.lotteryusa.com/${state}/${game}/`;
 
     try {
-        const response = await axios.get(targetUrl, {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept-Language': 'en-US,en;q=0.9'
-            }
-        });
-
-        const $ = cheerio.load(response.data);
+        const htmlData = await fetchWithAntiBlock(targetUrl);
+        const $ = cheerio.load(htmlData);
         
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
         
-        // PENGAMAN 1: Kunci pencarian hanya pada blok hasil teratas!
+        // PENGAMAN 1: Kunci pencarian hanya pada blok hasil teratas
         const blokResultTeratas = $('.c-game-components').first().length > 0 
             ? $('.c-game-components').first() 
             : $('main').first();
 
-        // Ambil keterangan waktu
         let tanggalWebUsa = "";
         let timeText = blokResultTeratas.find('time').first().text().trim();
         if (timeText) {
@@ -196,7 +238,6 @@ app.get('/api/result/:state/:game', async (req, res) => {
              tanggalWebUsa = blokResultTeratas.find('[class*="date"]').first().text().trim().toLowerCase();
         }
 
-        // Ambil Angka Keluar (Hanya dari blok paling atas)
         let angka_keluar = [];
         const bolaPertama = blokResultTeratas.find('[class*="ball"]').first();
         
@@ -209,7 +250,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // --- PENGAMAN 2: CEK STATUS BASI / BELUM RESULT ---
+        // PENGAMAN 2: CEK STATUS BASI / BELUM RESULT
         const textLengkap = blokResultTeratas.text().toLowerCase();
         const isJadwalMendatang = textLengkap.includes('upcoming') || textLengkap.includes('pending') || tanggalWebUsa.includes('at') || tanggalWebUsa.includes('yesterday');
         const isKosong = angka_keluar.length === 0 || angka_keluar.includes('--');
@@ -221,7 +262,6 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // --- HASIL CLEAN ---
         res.json({
             status: "sukses",
             pasaran: namaPasaran,
@@ -230,18 +270,16 @@ app.get('/api/result/:state/:game', async (req, res) => {
         });
 
     } catch (error) {
-        res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
+        res.status(500).json({ status: "error", pesan: "Gagal mengambil data dari target", detail: error.message });
     }
 });
 
 
-// --- FITUR: AMBIL PASARAN UTAMA ---
+// --- ENDPOINT: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
     try {
-        const response = await axios.get('https://www.lotteryusa.com/', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-        });
-        const $ = cheerio.load(response.data);
+        const htmlData = await fetchWithAntiBlock('https://www.lotteryusa.com/');
+        const $ = cheerio.load(htmlData);
         const markets = [];
         const bukanLotre = ['PLAY', 'Play online', 'Daily game stats', 'On this day'];
 
