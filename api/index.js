@@ -19,7 +19,6 @@ function dapatkanWaktuWIB() {
         second: '2-digit',
         hour12: false // Menggunakan format 24 jam
     };
-    // Hasilnya akan seperti: "16 Oktober 2026, 01:54:00 WIB"
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
@@ -28,11 +27,12 @@ function dapatkanWaktuWIB() {
 app.get('/', (req, res) => {
     res.json({
         status: "success",
-        message: "API Scraper LotteryUSA is Active!",
+        message: "API Scraper LotteryUSA & Taiwan is Active!",
         waktu_server_wib: dapatkanWaktuWIB(),
         endpoints: { 
             semua_pasaran_utama: "/api/markets",
-            pasaran_spesifik: "/api/result/:state/:game"
+            pasaran_spesifik: "/api/result/:state/:game",
+            radar_taiwan: "/api/taiwan-radar" // Tambahan rute baru
         }
     });
 });
@@ -151,6 +151,44 @@ app.get('/api/markets', async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({ status: "error", pesan: error.message });
+    }
+});
+
+
+// --- FITUR BARU: RADAR TAIWAN LOTTO ---
+app.get('/api/taiwan-radar', async (req, res) => {
+    try {
+        const response = await axios.get('https://www.taiwan-lotto.com/', {
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+            }
+        });
+
+        const $ = cheerio.load(response.data);
+        const judulHalaman = $('title').text().trim();
+        
+        // Mengambil sampel data HTML untuk melihat posisi bola angkanya
+        const tagDiv = []; 
+        $('div').each((i, el) => {
+            const className = $(el).attr('class');
+            if(className) tagDiv.push(className);
+        });
+
+        res.json({
+            status: "sukses_menembus",
+            pesan: "Horee! Tidak diblokir Cloudflare",
+            judul_halaman: judulHalaman,
+            sampel_class_html: tagDiv.slice(0, 15) // Ambil 15 class pertama
+        });
+
+    } catch (error) {
+        res.status(500).json({ 
+            status: "TERBLOKIR_CLOUDFLARE", 
+            kode_error: error.response ? error.response.status : error.message,
+            pesan: "Akses ditolak. Kita harus pakai jalur belakang (Bypass API)!" 
+        });
     }
 });
 
