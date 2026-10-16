@@ -6,16 +6,25 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// --- FUNGSI BANTUAN: WAKTU WIB ---
+// --- FUNGSI BANTUAN: MENDAPATKAN WAKTU WIB ---
+// Karena Vercel menggunakan server global (UTC), kita paksa konversi ke WIB (Asia/Jakarta)
 function dapatkanWaktuWIB() {
     const opsi = { 
-        timeZone: 'Asia/Jakarta', year: 'numeric', month: 'long', 
-        day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        timeZone: 'Asia/Jakarta', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false // Menggunakan format 24 jam
     };
+    // Hasilnya akan seperti: "16 Oktober 2026, 01:54:00 WIB"
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- HALAMAN DEPAN ---
+
+// --- HALAMAN DEPAN API ---
 app.get('/', (req, res) => {
     res.json({
         status: "success",
@@ -28,50 +37,76 @@ app.get('/', (req, res) => {
     });
 });
 
-// --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: kentucky/pick-4) ---
+
+// --- FITUR: AMBIL PASARAN SPESIFIK (Contoh: Kentucky Pick 4) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
     const targetUrl = `https://www.lotteryusa.com/${state}/${game}/`;
 
     try {
-        // PERBAIKAN: Memasang Alarm 5 Detik (5000 ms) agar Vercel tidak Error 500
         const response = await axios.get(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            timeout: 5000 
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+                'Accept-Language': 'en-US,en;q=0.9'
+            }
         });
+
         const $ = cheerio.load(response.data);
         
+        // 1. Ambil Nama Pasaran & Bersihkan Spasi
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
-        namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
-        let tanggalWeb = $('time').first().text().trim() \vert{}\vert{}$('[class*="date"]').first().text().trim();
+        namaPasaran = namaPasaran.replace(/winning numbers/i, '');
+        namaPasaran = namaPasaran.replace(/\s+/g, ' ').trim(); // Menghapus enter (\n) dan tab (\t)
+        
+        // 2. Ambil Tanggal Undian (Dari website LotteryUSA)
+        let tanggalWeb = "";
+        let timeText = $('time').first().text().trim();
+        
+        if (timeText) {
+             tanggalWeb = timeText;
+        } else {
+             tanggalWeb = $('[class*="date"]').first().text().trim();
+        }
 
+        // Catatan waktu aktual (WIB) saat data ditarik oleh bot Anda
+        const tanggalWIB = dapatkanWaktuWIB();
+
+        // 3. Ambil Angka Keluar Terbaru
         let angka_keluar = [];
         const bolaPertama = $('[class*="ball"]').first();
+        
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                if (angka && angka.length <= 3) angka_keluar.push(angka);
+                if (angka && angka.length <= 3) {
+                    angka_keluar.push(angka);
+                }
             });
         }
 
         res.json({
-            status: "sukses", sumber: targetUrl,
-            data: { pasaran: namaPasaran, tanggal_web: tanggalWeb, tanggal_ditarik_wib: dapatkanWaktuWIB(), angka_keluar: angka_keluar }
+            status: "sukses",
+            sumber: targetUrl,
+            data: {
+                pasaran: namaPasaran,
+                tanggal_web_usa: tanggalWeb, // Apa yang tertulis di web target (misal: "Today at...")
+                tanggal_ditarik_wib: tanggalWIB, // Waktu aktual scraping dalam WIB
+                angka_keluar: angka_keluar
+            }
         });
+
     } catch (error) {
-        // Jika gagal karena timeout atau diblokir, akan muncul pesan ini (bukan crash halaman putih)
-        res.status(500).json({ status: "error", pesan: "LotteryUSA gagal merespons atau memblokir IP", detail: error.message });
+        res.status(500).json({ status: "error", pesan: "Gagal mengambil data", detail: error.message });
     }
 });
+
 
 // --- FITUR: AMBIL PASARAN UTAMA ---
 app.get('/api/markets', async (req, res) => {
     try {
-        // PERBAIKAN: Memasang Alarm 5 Detik
         const response = await axios.get('https://www.lotteryusa.com/', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-            timeout: 5000
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
         const $ = cheerio.load(response.data);
         const markets = [];
@@ -82,7 +117,8 @@ app.get('/api/markets', async (req, res) => {
             if (namaPasaran && !bukanLotre.includes(namaPasaran) && !namaPasaran.includes('?') && namaPasaran.length <= 25) {
                 let parent = $(element).parent();
                 let angka_keluar = [];
-                let tanggal = "Belum diundi", jackpot = "N/A";
+                let tanggal = "Belum diundi";
+                let jackpot = "N/A";
 
                 for (let level = 0; level < 5; level++) {
                     parent.find('[class*="ball"]').each((i, ballEl) => {
@@ -100,14 +136,21 @@ app.get('/api/markets', async (req, res) => {
                     }
                     parent = parent.parent(); 
                 }
+
                 if (angka_keluar.length > 0) {
                     markets.push({ pasaran: namaPasaran, tanggal_undian: tanggal, jackpot: jackpot, angka_keluar: angka_keluar });
                 }
             }
         });
-        res.json({ status: "sukses", waktu_update_wib: dapatkanWaktuWIB(), total_pasaran: markets.length, data: markets });
+
+        res.json({ 
+            status: "sukses", 
+            waktu_update_wib: dapatkanWaktuWIB(), // Memakai format WIB 
+            total_pasaran: markets.length, 
+            data: markets 
+        });
     } catch (error) {
-        res.status(500).json({ status: "error", pesan: "LotteryUSA gagal merespons atau memblokir IP", detail: error.message });
+        res.status(500).json({ status: "error", pesan: error.message });
     }
 });
 
