@@ -21,13 +21,6 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// Mendapatkan format tanggal pendek WIB (Contoh: "Oct 17, 2026" atau "17 Oct")
-function getTanggalHariIniWIB() {
-    const opsi = { timeZone: 'Asia/Jakarta', month: 'short', day: 'numeric', year: 'numeric' };
-    return new Date().toLocaleDateString('en-US', opsi); // Contoh: "Oct 17, 2026"
-}
-
-
 // --- HALAMAN DEPAN API (DASHBOARD HTML) ---
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
@@ -115,7 +108,7 @@ app.get('/', (req, res) => {
 });
 
 
-// --- FITUR: AMBIL PASARAN SPESIFIK (DENGAN PENGAMAN TANGGAL) ---
+// --- FITUR: AMBIL PASARAN SPESIFIK (DENGAN PENGAMAN ANTI-BELUM WAKTUNYA) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -134,7 +127,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim();
         
-        // Ambil teks tanggal langsung dari web USA untuk divalidasi
+        // Ambil keterangan waktu dari web USA
         let tanggalWebUsa = "";
         let timeText = $('time').first().text().trim();
         if (timeText) {
@@ -143,34 +136,53 @@ app.get('/api/result/:state/:game', async (req, res) => {
              tanggalWebUsa = $('[class*="date"]').first().text().trim();
         }
 
-        // Ambil Angka Keluar (Maksimal 4 angka)
+        // --- AMBIL ANGKA KELUAR DENGAN VALIDASI KETAT ---
         let angka_keluar = [];
-        const bolaPertama = $('[class*="ball"]').first();
         
-        if (bolaPertama.length > 0) {
-            bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
+        // Cari elemen bola angka
+        const containerBola = $('[class*="ball"]').first();
+        if (containerBola.length > 0) {
+            containerBola.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                if (angka && angka.length <= 3 && angka_keluar.length < 4) {
+                // Pastikan angka valid (biasanya 1 digit per bola untuk pick 4, total max 4 angka)
+                if (angka && angka.length <= 2 && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
             });
         }
 
-        // --- PENGAMANAN TAMBAHAN (VALIDASI STATUS) ---
-        // Jika web USA bertuliskan "Today", "Tomorrow", atau memuat tanggal hari ini, statusnya AMAN.
-        // Tapi jika datanya kosong, kita berikan status peringatan ke bot Anda.
-        let statusData = "sukses";
-        if (angka_keluar.length === 0) {
-            statusData = "belum_update";
+        // --- CEK APAKAH STATUSNYA BENAR-BENAR BELUM WAKTUNYA ---
+        const pageText = $('body').text().toLowerCase();
+        
+        // Jika web menampilkan indikator belum diundi
+        const belumWaktunya = 
+            angka_keluar.length === 0 || 
+            pageText.includes('upcoming') || 
+            pageText.includes('pending') || 
+            angka_keluar.includes('--');
+
+        if (belumWaktunya) {
+            return res.json({
+                status: "belum_update",
+                sumber: targetUrl,
+                pesan: "Hasil undian belum tersedia atau belum waktunya di-result di web USA.",
+                data: {
+                    pasaran: namaPasaran,
+                    keterangan_waktu_usa: tanggalWebUsa || "Upcoming",
+                    tanggal_ditarik_wib: dapatkanWaktuWIB(),
+                    angka_keluar: []
+                }
+            });
         }
 
+        // Jika lolos semua pengaman, kirim status sukses dengan data valid
         res.json({
-            status: statusData,
+            status: "sukses",
             sumber: targetUrl,
             data: {
                 pasaran: namaPasaran,
-                keterangan_waktu_usa: tanggalWebUsa, // Contoh: "Today at 1:20 pm" / "Tomorrow"
-                tanggal_ditarik_wib: dapatkanWaktuWIB(), // Jam WIB saat ditarik
+                keterangan_waktu_usa: tanggalWebUsa,
+                tanggal_ditarik_wib: dapatkanWaktuWIB(),
                 angka_keluar: angka_keluar
             }
         });
@@ -202,7 +214,7 @@ app.get('/api/markets', async (req, res) => {
                 for (let level = 0; level < 5; level++) {
                     parent.find('[class*="ball"]').each((i, ballEl) => {
                         const angka = $(ballEl).text().trim();
-                        if (angka && angka.length <= 3) angka_keluar.push(angka);
+                        if (angka && angka.length <= 2) angka_keluar.push(angka);
                     });
 
                     if (angka_keluar.length > 0) {
