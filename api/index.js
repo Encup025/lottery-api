@@ -122,25 +122,24 @@ app.get('/api/markets', async (req, res) => {
 });
 
 
-// --- FITUR BARU: RADAR TAIWAN LOTTO (PAKAI SCRAPER API) ---
+// --- FITUR BARU: RADAR TAIWAN LOTTO (SCRAPER API PREMIUM) ---
 app.get('/api/taiwan-radar', async (req, res) => {
     try {
         const targetUrl = 'https://www.taiwan-lotto.com/';
         const apiKey = '0e888f5e8fbf6c89a96da30cedd5d406';
         
-        // Merakit URL ScraperAPI (Ninja Penembus Cloudflare)
-        const scraperApiUrl = `http://api.scraperapi.com?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}`;
+        // 1. Tambahan &premium=true (Menggunakan IP Asli Perumahan agar tidak dicurigai)
+        const scraperApiUrl = `http://api.scraperapi.com?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}&premium=true`;
 
-        const response = await axios.get(scraperApiUrl);
-        const $ = cheerio.load(response.data);
+        // 2. Tambahan timer 20 detik. Jika lebih dari 20 detik, tampilkan error rapi, hindari Vercel 500 crash.
+        const response = await axios.get(scraperApiUrl, { timeout: 20000 });
         
+        const $ = cheerio.load(response.data);
         const judulHalaman = $('title').text().trim();
         
-        // Kita tangkap teks h1 dan h2 untuk melihat struktur datanya
         const tagH1 = []; $('h1').each((i, el) => tagH1.push($(el).text().trim()));
         const tagH2 = []; $('h2').each((i, el) => tagH2.push($(el).text().trim()));
         
-        // Cek apakah ada elemen dengan tulisan bola/angka
         const sampelTeks = [];
         $('div, span').each((i, el) => {
             const teks = $(el).text().trim();
@@ -150,19 +149,21 @@ app.get('/api/taiwan-radar', async (req, res) => {
         });
 
         res.json({
-            status: "sukses_menembus_pakai_scraperapi",
-            pesan: "Luar biasa! Cloudflare berhasil dihancurkan oleh ScraperAPI!",
+            status: "sukses_menembus_pakai_scraperapi_premium",
+            pesan: "Luar biasa! Cloudflare berhasil dihancurkan oleh IP Premium ScraperAPI!",
             judul_halaman: judulHalaman,
             judul_h1_ditemukan: tagH1,
             judul_h2_ditemukan: tagH2,
-            potensi_angka_ditemukan: sampelTeks.slice(0, 10) // Tampilkan 10 angka pertama
+            potensi_angka_ditemukan: sampelTeks.slice(0, 10)
         });
 
     } catch (error) {
+        // Jika gagal karena timeout 20 detik, kita akan tahu alasannya dari JSON ini
         res.status(500).json({ 
-            status: "GAGAL", 
-            pesan: "ScraperAPI gagal memuat (mungkin timeout karena Vercel membatasi waktu 10 detik).",
-            detail: error.message
+            status: "GAGAL_MENEMBUS", 
+            pesan: "ScraperAPI butuh waktu terlalu lama atau IP diblokir permanen oleh Cloudflare.",
+            saran_sistem: "Mari kita cari website Live Draw Taiwan yang lain, website ini keamanannya terlalu berlebihan untuk API otomatis.",
+            detail_error: error.message
         });
     }
 });
