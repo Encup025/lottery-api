@@ -21,11 +21,12 @@ function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- FUNGSI BANTUAN 2: TANGGAL WIB FORMAT CLEAN ---
+// --- FUNGSI BANTUAN 2: TANGGAL WIB FORMAT CLEAN (INDEPENDEN) ---
 function getTanggalWIB() {
     const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const bulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     
+    // Tanggal independen murni dari waktu server berjalan yang dikonversi ke Jakarta/WIB
     const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
     return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
@@ -34,13 +35,8 @@ function getTanggalWIB() {
 async function getFreeProxies() {
     try {
         const response = await axios.get('https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt', { timeout: 4000 });
-        const proxies = response.data.split('\n')
-            .map(p => p.trim())
-            .filter(p => p.includes(':'))
-            .slice(0, 10); // Ambil 10 proxy teratas
-        return proxies;
+        return response.data.split('\n').map(p => p.trim()).filter(p => p.includes(':')).slice(0, 10);
     } catch (e) {
-        // Fallback proxy publik statis jika github gagal diambil
         return ['103.152.112.162:80', '47.74.152.29:8888', '118.174.204.142:8080'];
     }
 }
@@ -62,31 +58,24 @@ async function fetchWithAntiBlock(targetUrl) {
         'Upgrade-Insecure-Requests': '1'
     };
 
-    // Percobaan 1: Akses langsung menggunakan Header Browser Asli
     try {
         const response = await axios.get(targetUrl, { headers: headersConfig, timeout: 8000 });
         if (response.status === 200) return response.data;
     } catch (err1) {
-        console.log("Direct request blocked/error, trying free proxy rotator...");
+        console.log("Direct request blocked, trying proxy...");
     }
 
-    // Percobaan 2: Menggunakan Proxy Publik Gratis secara bergantian jika direct gagal (403/Timeout)
     const proxies = await getFreeProxies();
     for (let proxy of proxies) {
         try {
-            const [host, port] = proxy.split(':');
-            // Menggunakan tunneling proxy sederhana lewat http agent jika diperlukan, 
-            // atau cukup lempar ke public proxy scraper service jika Vercel mendukung.
-            // Karena Vercel serverless membatasi custom Agent, kita pakai alternatif fetch langsung via public proxy gateway:
             const proxyTargetUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
             const response = await axios.get(proxyTargetUrl, { timeout: 6000 });
             if (response.status === 200 && response.data) return response.data;
         } catch (errProxy) {
-            continue; // Coba proxy berikutnya
+            continue;
         }
     }
-
-    throw new Error("Semua jalur akses (Direct & Proxy Gratis) ditolak atau timeout oleh target.");
+    throw new Error("Semua jalur akses ditolak oleh target.");
 }
 
 
@@ -212,7 +201,7 @@ app.get('/', (req, res) => {
 });
 
 
-// --- ENDPOINT: AMBIL PASARAN SPESIFIK (DENGAN ANTI-BASI & ANTI-BLOCK PROXY) ---
+// --- ENDPOINT: AMBIL PASARAN (HANYA TAMPILKAN JSON SUKSES ATAU ERROR MATI) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -225,18 +214,9 @@ app.get('/api/result/:state/:game', async (req, res) => {
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
         
-        // PENGAMAN 1: Kunci pencarian hanya pada blok hasil teratas
         const blokResultTeratas = $('.c-game-components').first().length > 0 
             ? $('.c-game-components').first() 
             : $('main').first();
-
-        let tanggalWebUsa = "";
-        let timeText = blokResultTeratas.find('time').first().text().trim();
-        if (timeText) {
-             tanggalWebUsa = timeText.toLowerCase();
-        } else {
-             tanggalWebUsa = blokResultTeratas.find('[class*="date"]').first().text().trim().toLowerCase();
-        }
 
         let angka_keluar = [];
         const bolaPertama = blokResultTeratas.find('[class*="ball"]').first();
@@ -244,24 +224,20 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                if (angka && angka.length <= 2 && angka_keluar.length < 4) {
+                // HANYA ambil jika angka adalah digit beneran (tidak termasuk '--' atau kosong)
+                if (angka && angka !== '--' && !isNaN(angka) && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
             });
         }
 
-        // PENGAMAN 2: CEK STATUS BASI / BELUM RESULT
-        const textLengkap = blokResultTeratas.text().toLowerCase();
-        const isJadwalMendatang = textLengkap.includes('upcoming') || textLengkap.includes('pending') || tanggalWebUsa.includes('at') || tanggalWebUsa.includes('yesterday');
-        const isKosong = angka_keluar.length === 0 || angka_keluar.includes('--');
-        
-        if (isJadwalMendatang || isKosong) {
-            return res.json({
-                status: "belum_update",
-                pesan: "Data masih basi atau belum result."
-            });
+        // JIKA ANGKA MASIH KOSONG / STRIP (--), BERIKAN HTTP ERROR SAJA!
+        // Ini memastikan tidak ada json menjebak seperti "belum_update"
+        if (angka_keluar.length === 0) {
+            return res.status(400).send("Angka belum tersedia (--). Menunggu update.");
         }
 
+        // JIKA ANGKA SUDAH ADA, LANGSUNG CETAK FORMAT BERSIH
         res.json({
             status: "sukses",
             pasaran: namaPasaran,
