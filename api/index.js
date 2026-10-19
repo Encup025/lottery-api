@@ -26,7 +26,6 @@ function getTanggalWIB() {
     const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const bulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     
-    // Mengambil tanggal real-time saat ini di zona waktu Indonesia (WIB)
     const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
     return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
@@ -53,9 +52,7 @@ async function fetchWithAntiBlock(targetUrl) {
     try {
         const response = await axios.get(targetUrl, { headers: headersConfig, timeout: 8000 });
         if (response.status === 200) return response.data;
-    } catch (err1) {
-        console.log("Direct request blocked, trying proxy...");
-    }
+    } catch (err1) {}
 
     const proxies = await getFreeProxies();
     for (let proxy of proxies) {
@@ -189,7 +186,7 @@ app.get('/', (req, res) => {
 });
 
 
-// --- ENDPOINT SPESIFIK (DENGAN DETEKTOR REGEX TANGGAL USA & PENCARIAN TEPAT SASARAN) ---
+// --- ENDPOINT SPESIFIK (DENGAN SWEEPER METHOD & REGEX TANGGAL USA) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -204,20 +201,58 @@ app.get('/api/result/:state/:game', async (req, res) => {
         
         const blokResultTeratas = $('.c-game-components').first().length > 0 ? $('.c-game-components').first() :$('main').first();
 
-        let tanggalWebUsa = "";
-        let angka_keluar = [];
+        // 1. TENTUKAN ZONA WAKTU USA BERDASARKAN NEGARA BAGIAN
+        let tz = 'America/New_York';
+        if (['texas', 'missouri', 'iowa', 'indiana'].includes(state)) tz = 'America/Chicago';
+        if (['california', 'oregon'].includes(state)) tz = 'America/Los_Angeles';
+        if (state === 'arizona') tz = 'America/Phoenix';
+
+        // 2. AMBIL BULAN DAN TANGGAL ASLI AMERIKA SAAT INI (REAL-TIME)
+        const usDateObj = new Date(new Date().toLocaleString("en-US", {timeZone: tz}));
+        const usDay = usDateObj.getDate().toString();
+        const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+        const usMonth = monthNames[usDateObj.getMonth()]; 
+
+        let webMonth = "";
+        let webDay = "";
         
-        // 1. CARI BOLA ANGKA TERLEBIH DAHULU
+        // 3. MENGUMPULKAN SEMUA TEKS POTENSIAL TANGGAL DI BLOK RESULT
+        let possibleDateTexts = [];
+        
+        // Kumpulkan dari tag <time> dan class .date (Yang paling akurat)
+        blokResultTeratas.find('time, [class*="date"]').each((i, el) => {
+            possibleDateTexts.push($(el).text().toLowerCase());
+        });
+
+        // 4. DETEKTOR "SAPU BERSIH" (Sweeper Method)
+        for (let t of possibleDateTexts) {
+            // Tolak tanggal yang merupakan bagian dari jadwal besok
+            if (t.includes('tomorrow') || t.includes('next')) continue;
+            
+            // Ekstrak nama bulan dan angka
+            let match = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[^0-9]*(\d+)/i);
+            if (match) {
+                webMonth = match[1].toLowerCase(); // cth: "oct"
+                webDay = match[2];                 // cth: "19"
+                break; // Hentikan sapuan saat tanggal pertama yang valid ditemukan!
+            }
+        }
+
+        // Jika karena suatu hal tanggal web tetap tidak ketemu sama sekali
+        if (!webMonth || !webDay) {
+             return res.status(400).send(`Data belum update. Tidak dapat menemukan teks tanggal di web, sedangkan hari ini di zona ${tz} adalah ${usMonth} ${usDay}.`);
+        }
+
+        // 5. PENGAMAN UTAMA: Cek kecocokan tanggal web vs tanggal Amerika saat ini
+        if (webMonth !== usMonth || webDay !== usDay) {
+            return res.status(400).send(`Data belum update. Angka di web adalah untuk ${webMonth} ${webDay}, sedangkan hari ini di zona ${tz} adalah ${usMonth} ${usDay}.`);
+        }
+
+        // 6. AMBIL ANGKA DARI BOLA JIKA TANGGAL SUDAH COCOK
+        let angka_keluar = [];
         const bolaPertama = blokResultTeratas.find('[class*="ball"]').first();
         
         if (bolaPertama.length > 0) {
-            // 2. MUNDUR KE BARIS (PARENT) TEMPAT BOLA ITU BERADA UNTUK MENCARI TANGGAL YANG BENAR (MENGABAIKAN TULISAN "NEXT DRAW")
-            let parentBaris = bolaPertama.parent().parent();
-            tanggalWebUsa = parentBaris.find('time').first().text().trim();
-            if (!tanggalWebUsa) tanggalWebUsa = parentBaris.find('[class*="date"]').first().text().trim();
-            if (!tanggalWebUsa) tanggalWebUsa = parentBaris.text().trim(); // Fallback ambil semua teks di baris bola tsb
-            
-            // 3. AMBIL ANGKA DARI BOLA
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
                 if (angka && angka !== '--' && !isNaN(angka) && angka_keluar.length < 4) {
@@ -225,44 +260,13 @@ app.get('/api/result/:state/:game', async (req, res) => {
                 }
             });
         }
-        
-        tanggalWebUsa = tanggalWebUsa.toLowerCase();
 
-        // 4. JIKA BOLA MASIH KOSONG / STRIP
+        // 7. JIKA BOLA MASIH KOSONG / STRIP
         if (angka_keluar.length === 0) {
             return res.status(400).send("Angka belum tersedia (--).");
         }
 
-        // 5. TENTUKAN ZONA WAKTU USA BERDASARKAN NEGARA BAGIAN
-        let tz = 'America/New_York';
-        if (['texas', 'missouri', 'iowa', 'indiana'].includes(state)) tz = 'America/Chicago';
-        if (['california', 'oregon'].includes(state)) tz = 'America/Los_Angeles';
-        if (state === 'arizona') tz = 'America/Phoenix';
-
-        // 6. AMBIL BULAN DAN TANGGAL ASLI AMERIKA SAAT INI (REAL-TIME)
-        const usDateObj = new Date(new Date().toLocaleString("en-US", {timeZone: tz}));
-        const usDay = usDateObj.getDate().toString();
-        const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-        const usMonth = monthNames[usDateObj.getMonth()]; 
-
-        // 7. DETEKTOR TANGGAL REGEX (Hanya mengekstrak dari teks di sebelah bola)
-        const regex = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[^0-9]*(\d+)/i;
-        const match = tanggalWebUsa.match(regex);
-
-        let webMonth = "";
-        let webDay = "";
-
-        if (match) {
-            webMonth = match[1].toLowerCase();
-            webDay = match[2];
-        }
-
-        // 8. PENGAMAN UTAMA: Cek kecocokan tanggal bola vs tanggal Amerika saat ini
-        if (webMonth !== usMonth || webDay !== usDay) {
-            return res.status(400).send(`Data belum update. Angka di web adalah untuk ${webMonth} ${webDay}, sedangkan hari ini di zona ${tz} adalah ${usMonth} ${usDay}.`);
-        }
-
-        // 9. JIKA SEMUA LOLOS: KELUARKAN JSON SUKSES BERSIH
+        // 8. JIKA SEMUA LOLOS: KELUARKAN JSON SUKSES BERSIH
         res.json({
             status: "sukses",
             pasaran: namaPasaran,
