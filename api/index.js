@@ -16,17 +16,17 @@ function dapatkanWaktuWIB() {
         hour: '2-digit', 
         minute: '2-digit',
         second: '2-digit',
-        hour12: false
+        hour12: false 
     };
     return new Date().toLocaleString('id-ID', opsi) + " WIB";
 }
 
-// --- FUNGSI BANTUAN 2: TANGGAL WIB FORMAT CLEAN (INDEPENDEN) ---
+// --- FUNGSI BANTUAN 2: TANGGAL WIB UNTUK OUTPUT BOT (INDEPENDEN) ---
 function getTanggalWIB() {
     const hari = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const bulan = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
     
-    // Tanggal independen murni dari waktu server berjalan yang dikonversi ke Jakarta/WIB
+    // Mengambil tanggal real-time saat ini di zona waktu Indonesia (WIB)
     const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Jakarta"}));
     return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
@@ -41,20 +41,12 @@ async function getFreeProxies() {
     }
 }
 
-// --- FUNGSI PENGAMBIL DATA DENGAN ANTI-BLOCK & PROXY ROTATOR ---
+// --- FUNGSI PENGAMBIL DATA (ANTI-BLOCK DENGAN PROXY) ---
 async function fetchWithAntiBlock(targetUrl) {
     const headersConfig = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
         'Upgrade-Insecure-Requests': '1'
     };
 
@@ -71,8 +63,8 @@ async function fetchWithAntiBlock(targetUrl) {
             const proxyTargetUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
             const response = await axios.get(proxyTargetUrl, { timeout: 6000 });
             if (response.status === 200 && response.data) return response.data;
-        } catch (errProxy) {
-            continue;
+        } catch (errProxy) { 
+            continue; 
         }
     }
     throw new Error("Semua jalur akses ditolak oleh target.");
@@ -82,7 +74,6 @@ async function fetchWithAntiBlock(targetUrl) {
 // --- HALAMAN DEPAN API (DASHBOARD HTML) ---
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
-    
     const html = `
     <!DOCTYPE html>
     <html lang="id">
@@ -98,23 +89,21 @@ app.get('/', (req, res) => {
             .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
             .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
             .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
-            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; transition: 0.3s; text-align: center; font-size: 0.9em; }
+            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; text-align: center; transition: 0.3s;}
             a:hover { background: #ff9800; color: #121212; }
-            .btn-utama { background: #d32f2f; color: white; border-left: 5px solid #d32f2f; }
+            .btn-utama { background: #d32f2f; border-left: 5px solid #d32f2f; }
             .btn-utama a { color: white; background: #b71c1c; }
-            .btn-utama a:hover { background: #ff5252; color: white;}
+            .btn-utama a:hover { background: #ff5252; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>🚀 Server API Live Draw USA</h1>
             <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
-
             <div class="market-card btn-utama" style="margin-bottom: 20px;">
                 <h2 style="color:white;">🌐 Pasaran Nasional</h2>
                 <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
             </div>
-
             <div class="grid">
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
@@ -196,12 +185,11 @@ app.get('/', (req, res) => {
     </body>
     </html>
     `;
-    
     res.send(html);
 });
 
 
-// --- ENDPOINT: AMBIL PASARAN (HANYA TAMPILKAN JSON SUKSES ATAU ERROR MATI) ---
+// --- ENDPOINT SPESIFIK (DENGAN DETEKTOR REGEX TANGGAL USA) ---
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
@@ -214,30 +202,61 @@ app.get('/api/result/:state/:game', async (req, res) => {
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
         
-        const blokResultTeratas = $('.c-game-components').first().length > 0 
-            ? $('.c-game-components').first() 
-            : $('main').first();
+        const blokResultTeratas = $('.c-game-components').first().length > 0 ? $('.c-game-components').first() :$('main').first();
 
+        // 1. CARI TANGGAL PADA BLOK RESULT TERATAS DI WEB
+        let tanggalWebUsa = blokResultTeratas.find('time').first().text().trim();
+        if (!tanggalWebUsa) tanggalWebUsa = blokResultTeratas.find('[class*="date"]').first().text().trim();
+        tanggalWebUsa = tanggalWebUsa.toLowerCase();
+
+        // 2. TENTUKAN ZONA WAKTU USA BERDASARKAN NEGARA BAGIAN
+        let tz = 'America/New_York'; // Default wilyah timur
+        if (['texas', 'missouri', 'iowa', 'indiana'].includes(state)) tz = 'America/Chicago';
+        if (['california', 'oregon'].includes(state)) tz = 'America/Los_Angeles';
+        if (state === 'arizona') tz = 'America/Phoenix';
+
+        // 3. AMBIL BULAN DAN TANGGAL ASLI AMERIKA SAAT INI (REAL-TIME)
+        const usDateObj = new Date(new Date().toLocaleString("en-US", {timeZone: tz}));
+        const usDay = usDateObj.getDate().toString();
+        const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+        const usMonth = monthNames[usDateObj.getMonth()]; // Output: "oct", "nov", dll
+
+        // 4. DETEKTOR TANGGAL REGEX (Mengekstrak bulan dan angka pada web LotteryUSA secara paksa)
+        const regex = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[^0-9]*(\d+)/i;
+        const match = tanggalWebUsa.match(regex);
+
+        let webMonth = "";
+        let webDay = "";
+
+        if (match) {
+            webMonth = match[1].toLowerCase(); // Mengambil 3 huruf bulan (cth: "oct")
+            webDay = match[2];                 // Mengambil angka tanggal (cth: "19")
+        }
+
+        // 5. PENGAMAN UTAMA: Jika tanggal/bulan web TIDAK SAMA DENGAN tanggal/bulan Amerika saat ini -> TOLAK!
+        // Ini mencegah Vercel mengambil result kemarin dan memberinya tanggal hari ini.
+        if (webMonth !== usMonth || webDay !== usDay) {
+            return res.status(400).send(`Data belum update. Web masih tertulis ${webMonth} ${webDay}, sedangkan hari ini di zona ${tz} adalah ${usMonth} ${usDay}.`);
+        }
+
+        // 6. EKSTRAK ANGKA KELUARAN (Jika tanggal cocok)
         let angka_keluar = [];
         const bolaPertama = blokResultTeratas.find('[class*="ball"]').first();
-        
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                // HANYA ambil jika angka adalah digit beneran (tidak termasuk '--' atau kosong)
                 if (angka && angka !== '--' && !isNaN(angka) && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
             });
         }
 
-        // JIKA ANGKA MASIH KOSONG / STRIP (--), BERIKAN HTTP ERROR SAJA!
-        // Ini memastikan tidak ada json menjebak seperti "belum_update"
+        // 7. PENGAMAN KEDUA: Jika didalam bola masih strip (--)
         if (angka_keluar.length === 0) {
-            return res.status(400).send("Angka belum tersedia (--). Menunggu update.");
+            return res.status(400).send("Angka belum tersedia (--).");
         }
 
-        // JIKA ANGKA SUDAH ADA, LANGSUNG CETAK FORMAT BERSIH
+        // JIKA SEMUA LOLOS (TANGGAL COCOK & ANGKA ADA): KELUARKAN JSON SUKSES BERSIH
         res.json({
             status: "sukses",
             pasaran: namaPasaran,
@@ -272,7 +291,6 @@ app.get('/api/markets', async (req, res) => {
                         const angka = $(ballEl).text().trim();
                         if (angka && angka.length <= 3) angka_keluar.push(angka);
                     });
-
                     if (angka_keluar.length > 0) {
                         tanggal = parent.find('time, [class*="date"]').first().text().trim() || tanggal;
                         parent.find('[class*="jackpot"], [class*="prize"]').each((i, jpEl) => {
@@ -283,19 +301,11 @@ app.get('/api/markets', async (req, res) => {
                     }
                     parent = parent.parent(); 
                 }
-
-                if (angka_keluar.length > 0) {
-                    markets.push({ pasaran: namaPasaran, tanggal_undian: tanggal, jackpot: jackpot, angka_keluar: angka_keluar });
-                }
+                if (angka_keluar.length > 0) markets.push({ pasaran: namaPasaran, tanggal_undian: tanggal, jackpot: jackpot, angka_keluar: angka_keluar });
             }
         });
 
-        res.json({ 
-            status: "sukses", 
-            waktu_update_wib: dapatkanWaktuWIB(),
-            total_pasaran: markets.length, 
-            data: markets 
-        });
+        res.json({ status: "sukses", waktu_update_wib: dapatkanWaktuWIB(), total_pasaran: markets.length, data: markets });
     } catch (error) {
         res.status(500).json({ status: "error", pesan: error.message });
     }
