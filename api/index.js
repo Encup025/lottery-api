@@ -199,57 +199,50 @@ app.get('/api/result/:state/:game', async (req, res) => {
         let namaPasaran = $('h1').text().trim() || `${state} ${game}`;
         namaPasaran = namaPasaran.replace(/winning numbers/i, '').replace(/\s+/g, ' ').trim().toUpperCase();
         
-        const blokResultTeratas = $('.c-game-components').first().length > 0 ? $('.c-game-components').first() :$('main').first();
-
         // 1. TENTUKAN ZONA WAKTU USA BERDASARKAN NEGARA BAGIAN
         let tz = 'America/New_York';
         if (['texas', 'missouri', 'iowa', 'indiana'].includes(state)) tz = 'America/Chicago';
         if (['california', 'oregon'].includes(state)) tz = 'America/Los_Angeles';
         if (state === 'arizona') tz = 'America/Phoenix';
 
-        // 2. AM পঞ্চাশ BULAN DAN TANGGAL ASLI AMERIKA SAAT INI (REAL-TIME)
+        // 2. AMBIL WAKTU AMERIKA SAAT INI & TANGGAL BESOK UNTUK FILTER
         const usDateObj = new Date(new Date().toLocaleString("en-US", {timeZone: tz}));
         const usDay = usDateObj.getDate().toString();
         const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
         const usMonth = monthNames[usDateObj.getMonth()]; 
 
+        // Hitung kalender besok di Amerika
+        const usTomorrowObj = new Date(usDateObj);
+        usTomorrowObj.setDate(usTomorrowObj.getDate() + 1);
+        const tmrwDay = usTomorrowObj.getDate().toString();
+        const tmrwMonth = monthNames[usTomorrowObj.getMonth()];
+
+        // 3. BACA SELURUH TEKS HALAMAN & EKSTRAK SEMUA FORMAT TANGGAL
+        let fullText = $('body').text().toLowerCase();
+        let dateMatches = fullText.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\,\.\-]*(\d{1,2})/ig);
+
         let webMonth = "";
         let webDay = "";
-        
-        // 3. MENGUMPULKAN SEMUA TEKS POTENSIAL TANGGAL DI BLOK RESULT
-        let possibleDateTexts = [];
-        
-        // Perluas jaring selector untuk mengantisipasi perubahan struktur (terutama Florida)
-        blokResultTeratas.find('time, [class*="date"], .c-draw-card__draw-date, h2, h3, p, span').each((i, el) => {
-            const teks = $(el).text().trim().toLowerCase();
-            if (teks.length > 5 && teks.length < 50) { // Filter teks yang terlalu panjang/pendek
-                possibleDateTexts.push(teks);
-            }
-        });
 
-        // FALLBACK EKSTRIM: Jika masih kosong, bongkar semua teks di dalam blok result baris demi baris
-        if (possibleDateTexts.length === 0) {
-            const teksKasar = blokResultTeratas.text().toLowerCase().split('\n');
-            possibleDateTexts = teksKasar.map(t => t.trim()).filter(t => t.length > 5);
-        }
+        if (dateMatches) {
+            for (let d of dateMatches) {
+                // Ekstrak bulan dan tanggal spesifik dari setiap kecocokan
+                let parts = d.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\,\.\-]*(\d{1,2})/i);
+                let m = parts[1].toLowerCase();
+                let day = parseInt(parts[2], 10).toString(); // parseInt membuang angka 0 di depan (cth: 09 jadi 9)
 
-        // 4. DETEKTOR "SAPU BERSIH" (Sweeper Method)
-        for (let t of possibleDateTexts) {
-            // Tolak tanggal yang merupakan bagian dari jadwal besok/estimasi
-            if (t.includes('tomorrow') || t.includes('next') || t.includes('estimated')) continue;
-            
-            // Ekstrak nama bulan dan angka (cth: "oct 19" atau "october 19")
-            let match = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[^0-9]*(\d+)/i);
-            if (match) {
-                webMonth = match[1].toLowerCase(); 
-                webDay = match[2];                 
-                break; // Hentikan sapuan saat tanggal pertama yang valid ditemukan!
+                // Jika tanggal yang terbaca adalah jadwal "Besok", lewati dan cari tanggal berikutnya
+                if (m === tmrwMonth && day === tmrwDay) continue;
+
+                // Tanggal pertama yang bukan besok dipastikan adalah tanggal keluaran (Latest Numbers)
+                webMonth = m;
+                webDay = day;
+                break; 
             }
         }
 
-        // Jika karena suatu hal tanggal web tetap tidak ketemu sama sekali
         if (!webMonth || !webDay) {
-             return res.status(400).send(`Data belum update. Tidak dapat menemukan teks tanggal di web, sedangkan hari ini di zona ${tz} adalah ${usMonth} ${usDay}.`);
+             return res.status(400).send(`Data belum update. Tidak ada format teks tanggal yang terbaca di halaman web.`);
         }
 
         // 5. PENGAMAN UTAMA: Cek kecocokan tanggal web vs tanggal Amerika saat ini
@@ -257,13 +250,16 @@ app.get('/api/result/:state/:game', async (req, res) => {
             return res.status(400).send(`Data belum update. Angka di web adalah untuk ${webMonth} ${webDay}, sedangkan hari ini di zona ${tz} adalah ${usMonth} ${usDay}.`);
         }
 
-        // 6. AMBIL ANGKA DARI BOLA JIKA TANGGAL SUDAH COCOK
+        // 6. AMBIL ANGKA DARI BOLA & ABAIKAN FIREBALL (FB)
         let angka_keluar = [];
+        const blokResultTeratas = $('.c-game-components').first().length > 0 ? $('.c-game-components').first() :$('main').first();
         const bolaPertama = blokResultTeratas.find('[class*="ball"]').first();
         
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
+                // Filter !isNaN memastikan elemen bertuliskan "FB:9" otomatis diabaikan,
+                // dan angka_keluar.length < 4 membatasi tarikan murni untuk Pick 4
                 if (angka && angka !== '--' && !isNaN(angka) && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
