@@ -311,7 +311,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const targetGame = GAME_ALIAS[`${state}/${game}`] || game;
     const targetUrl = `https://www.lotteryusa.com/${state}/${targetGame}/`;
 
-    const cacheKey = `${state}/${targetGame}/${iso(partsInTZ(new Date(), tz))}`;
+    const cacheKey = `${state}/${targetGame}/${iso(partsInTZ(new Date(), 'Asia/Jakarta'))}`;
     const hit = okCache.get(cacheKey);
     if (hit && Date.now() - hit.t < OK_TTL_MS) {
         return res.json(hit.v.waktu_undian_wib ? hit.v : { ...hit.v, tanggal_wib: getTanggalWIB() });
@@ -360,8 +360,34 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // --- Bandingkan dengan HARI INI di zona negara bagian tsb ---
-        if (iso(tglUndian) !== iso(tzNow)) {
+        // Tanggal di web tidak boleh lebih baru dari hari ini di zona US-nya
+        if (iso(tglUndian) > iso(tzNow)) {
+            return res.json({
+                status: 'belum_update',
+                pesan: `Belum update: tanggal web ${iso(tglUndian)} lebih baru dari hari ini di ${tz} (${iso(tzNow)})`
+            });
+        }
+
+        // Terjemahkan undian ke WIB memakai jam undian game ini
+        const jam = JADWAL[`${state}/${game}`];
+        let waktuUndian = null;
+        if (jam) {
+            const [hh, mm] = jam.split(':').map(Number);
+            waktuUndian = localToDate(tglUndian.y, tglUndian.m, tglUndian.d, hh, mm, tz);
+        }
+
+        if (waktuUndian) {
+            // Tanggal WIB undian harus = hari ini di WIB (sama dengan pandangan bot)
+            const wibUndian = iso(partsInTZ(waktuUndian, 'Asia/Jakarta'));
+            const wibHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+            if (wibUndian !== wibHariIni) {
+                return res.json({
+                    status: 'belum_update',
+                    pesan: `Belum update: undian di web (${iso(tglUndian)} US) jatuh ${wibUndian} WIB, hari ini ${wibHariIni} WIB`
+                });
+            }
+        } else if (iso(tglUndian) !== iso(tzNow)) {
+            // Tanpa jadwal: fallback, tanggal US harus sama dengan hari ini di zonanya
             return res.json({
                 status: 'belum_update',
                 pesan: `Belum update: web masih ${iso(tglUndian)}, hari ini di ${tz} adalah ${iso(tzNow)}`
@@ -388,16 +414,8 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // Terjemahkan tanggal undian US -> WIB memakai jam undian game ini
-        let tglWib = getTanggalWIB();
-        let waktuWib = null;
-        const jam = JADWAL[`${state}/${game}`];
-        if (jam) {
-            const [hh, mm] = jam.split(':').map(Number);
-            const waktuUndian = localToDate(tglUndian.y, tglUndian.m, tglUndian.d, hh, mm, tz);
-            tglWib = getTanggalWIB(waktuUndian);
-            waktuWib = jamWIB(waktuUndian);
-        }
+        const tglWib = waktuUndian ? getTanggalWIB(waktuUndian) : getTanggalWIB();
+        const waktuWib = waktuUndian ? jamWIB(waktuUndian) : null;
 
         const payload = {
             status: 'sukses',
