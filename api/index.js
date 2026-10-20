@@ -124,7 +124,7 @@ app.get('/', (req, res) => {
                 </div>
                 <div class="market-card">
                     <h2>🍊 Florida</h2>
-                    <a href="/api/result/florida/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/florida/pick-4-midday" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/florida/pick-4-evening" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
@@ -191,7 +191,20 @@ app.get('/', (req, res) => {
 app.get('/api/result/:state/:game', async (req, res) => {
     const state = req.params.state;
     const game = req.params.game;
-    const targetUrl = `https://www.lotteryusa.com/${state}/${game}/`;
+    
+    // --- SISTEM ALIAS / PENERJEMAH URL TARGET ---
+    // Bot tetap memanggil URL konsisten secara terpisah, API yang menyesuaikan dengan URL aneh target
+    let targetGame = game;
+    
+    if (state === 'florida') {
+        if (game === 'pick-4-midday') targetGame = 'midday-pick-4';
+        if (game === 'pick-4-evening') targetGame = 'pick-4';
+    }
+    
+    // Penyesuaian untuk pasaran lain jika diperlukan oleh bot
+    if (state === 'kentucky' && game === 'pick-4-evening') targetGame = 'pick-4';
+
+    const targetUrl = `https://www.lotteryusa.com/${state}/${targetGame}/`;
 
     try {
         const htmlData = await fetchWithAntiBlock(targetUrl);
