@@ -26,17 +26,31 @@ const STATE_TZ = {
     'new-jersey': 'America/New_York'
 };
 
-// Slug Washington DC pada LotteryUSA berbeda dengan endpoint bot.
+// Slug negara bagian pada LotteryUSA.
 const STATE_SLUG = {
     'washington-dc': 'district-of-columbia'
 };
 
-// Alias URL: key = state/game dari bot, value = game di web target.
+// Alias endpoint API -> slug game asli LotteryUSA.
 const GAME_ALIAS = {
+    // Texas
+    'texas/morning-daily-4': 'morning-pick-4',
+    'texas/day-daily-4': 'midday-4',
+    'texas/evening-daily-4': 'evening-pick-4',
+    'texas/night-daily-4': 'daily-4',
+
+    // Oregon
+    'oregon/1-pm-pick-4': 'pick-4-1pm',
+    'oregon/4-pm-pick-4': 'pick-4-4pm',
+    'oregon/7-pm-pick-4': 'pick-4-7pm',
+    'oregon/10-pm-pick-4': 'pick-4-10pm',
+
+    // Florida
     'florida/pick-4-midday': 'midday-pick-4',
     'florida/pick-4-evening': 'pick-4',
-    'kentucky/pick-4-evening': 'pick-4',
-    'georgia/cash-4-evening': 'cash-4'
+
+    // Kentucky
+    'kentucky/pick-4-evening': 'pick-4'
 };
 
 const MONTHS = [
@@ -46,7 +60,6 @@ const MONTHS = [
 
 // ================= HELPER TANGGAL =================
 
-// Ambil Y/M/D di zona tertentu.
 function partsInTZ(date, tz) {
     const f = new Intl.DateTimeFormat('en-CA', {
         timeZone: tz,
@@ -69,7 +82,6 @@ function partsInTZ(date, tz) {
 const iso = ({ y, m, d }) =>
     `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
-// Pastikan tanggal ISO benar-benar ada di kalender.
 function tanggalValid(value) {
     if (!value) return false;
 
@@ -92,7 +104,6 @@ function tanggalValid(value) {
     );
 }
 
-// Selisih zona terhadap UTC dalam milidetik, memperhitungkan DST.
 function tzOffsetMs(date, tz) {
     const f = new Intl.DateTimeFormat('en-US', {
         timeZone: tz,
@@ -121,7 +132,6 @@ function tzOffsetMs(date, tz) {
     return asUTC - Math.floor(date.getTime() / 1000) * 1000;
 }
 
-// Jam dinding lokal menjadi instant Date.
 function localToDate(y, m, d, hh, mm, tz) {
     const guess = Date.UTC(y, m - 1, d, hh, mm);
 
@@ -171,13 +181,12 @@ function getTanggalWIB(waktu = new Date()) {
     return `${hari[hr]}, ${d} ${bulan[m - 1]} ${y}`;
 }
 
-// Parse tanggal ISO, "Oct 19, 2026", atau "October 19".
+// Parse ISO, "Oct 19, 2026", dan "October 19".
 function parseTanggal(str, tzNow) {
     if (!str) return null;
 
     str = String(str).toLowerCase().trim();
 
-    // Format ISO: 2026-10-19
     let match = str.match(/(\d{4})-(\d{2})-(\d{2})/);
 
     if (match) {
@@ -190,7 +199,6 @@ function parseTanggal(str, tzNow) {
         return tanggalValid(iso(hasil)) ? hasil : null;
     }
 
-    // Format: "oct 19, 2026" / "october 19".
     match = str.match(
         /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?!\d)(?:,?\s*(\d{4}))?/
     );
@@ -199,7 +207,6 @@ function parseTanggal(str, tzNow) {
         const bulan = MONTHS.indexOf(match[1]) + 1;
         let tahun = match[3] ? Number(match[3]) : tzNow.y;
 
-        // Jika tahun tidak tercantum, tangani pergantian tahun.
         if (!match[3] && bulan > tzNow.m + 1) {
             tahun -= 1;
         } else if (!match[3] && tzNow.m === 1 && bulan === 12) {
@@ -219,7 +226,7 @@ function parseTanggal(str, tzNow) {
 }
 
 // ================= JADWAL UNDIAN =================
-// Jam lokal negara bagian. Nilai dipertahankan dari kode asli.
+// Jam lokal dipertahankan dari konfigurasi sebelumnya.
 const JADWAL = {
     'texas/morning-daily-4': '10:00',
     'texas/day-daily-4': '12:27',
@@ -272,7 +279,7 @@ const JADWAL = {
 
 const JAM_DEFAULT = '13:00';
 
-// Slot pasaran pada konfigurasi bot (WIB).
+// Slot pasaran WIB.
 const SLOT_WIB = {
     'kentucky/midday-pick-4': '00:11',
     'florida/pick-4-midday': '00:21',
@@ -302,7 +309,6 @@ const SLOT_WIB = {
     'texas/morning-daily-4': '22:00'
 };
 
-// Cari instant pada tanggal lokal US yang sesuai dengan slot WIB.
 function slotWIB(tglUS, tz, slot) {
     const [hh, mm] = slot.split(':').map(Number);
 
@@ -345,21 +351,30 @@ const HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9'
 };
 
-const diblokCF = data =>
-    typeof data !== 'string' ||
-    data.includes('Just a moment...') ||
-    data.includes('Attention Required');
+const diblokCF = data => {
+    if (typeof data !== 'string') return true;
+
+    const lower = data.toLowerCase();
+
+    return (
+        lower.includes('just a moment...') ||
+        lower.includes('attention required') ||
+        lower.includes('cf-chl-') ||
+        lower.includes('cloudflare ray id')
+    );
+};
 
 async function ambil(url, headers) {
     const res = await axios.get(url, {
         headers,
-        timeout: 4500,
+        timeout: 8000,
         responseType: 'text',
-        maxRedirects: 5
+        maxRedirects: 5,
+        validateStatus: status => status >= 200 && status < 400
     });
 
     if (res.status !== 200 || diblokCF(res.data)) {
-        throw new Error('blocked');
+        throw new Error(`HTTP ${res.status} atau halaman diblokir`);
     }
 
     return res.data;
@@ -368,17 +383,35 @@ async function ambil(url, headers) {
 async function fetchWithAntiBlock(targetUrl) {
     const enc = encodeURIComponent(targetUrl);
 
-    try {
-        return await Promise.any([
-            ambil(targetUrl, HEADERS),
-            ambil(`https://api.allorigins.win/raw?url=${enc}`, {}),
-            ambil(`https://api.codetabs.com/v1/proxy?quest=${enc}`, {})
-        ]);
-    } catch (error) {
-        throw new Error(
-            'Diblokir Cloudflare: semua jalur akses gagal.'
-        );
+    const urls = [
+        targetUrl,
+        `https://api.allorigins.win/raw?url=${enc}`,
+        `https://api.codetabs.com/v1/proxy?quest=${enc}`
+    ];
+
+    const hasil = await Promise.allSettled(
+        urls.map(url => ambil(url, url === targetUrl ? HEADERS : {}))
+    );
+
+    for (const item of hasil) {
+        if (
+            item.status === 'fulfilled' &&
+            typeof item.value === 'string' &&
+            item.value.length > 500 &&
+            !diblokCF(item.value)
+        ) {
+            return item.value;
+        }
     }
+
+    const alasan = hasil
+        .filter(item => item.status === 'rejected')
+        .map(item => item.reason?.message || 'Request gagal')
+        .join(' | ');
+
+    throw new Error(
+        `Semua jalur akses LotteryUSA gagal. ${alasan || 'HTML tidak valid'}`
+    );
 }
 
 // ================= CACHE HASIL VALID =================
@@ -400,14 +433,12 @@ function getCache(key) {
 }
 
 function setCache(key, value) {
-    // Hapus entri kedaluwarsa.
     for (const [cacheKey, item] of okCache.entries()) {
         if (Date.now() - item.t >= OK_TTL_MS) {
             okCache.delete(cacheKey);
         }
     }
 
-    // Batasi ukuran cache.
     while (
         !okCache.has(key) &&
         okCache.size >= CACHE_MAX_ENTRIES
@@ -426,7 +457,6 @@ function setCache(key, value) {
     });
 }
 
-// Respons default ringkas; ?debug=1 untuk detail.
 function bentukRespons(full, debug) {
     if (debug) return full;
 
@@ -446,8 +476,6 @@ function bentukRespons(full, debug) {
 }
 
 // ================= HELPER PARSER HASIL =================
-
-// Deteksi bola Fireball dan turunannya.
 function isFireball($, element) {
     const cls = ($(element).attr('class') || '').toLowerCase();
 
@@ -457,29 +485,22 @@ function isFireball($, element) {
     );
 }
 
-// Ambil angka satu digit, tidak termasuk Fireball.
 function ambilAngka($, wadah) {
     const angka = [];
-    const sudahAda = new Set();
 
     wadah.find('[class*="ball"]').each((i, element) => {
         if (isFireball($, element)) return;
 
         const teks = $(element).text().trim();
 
-        if (/^\d$/.test(teks) && angka.length < 4) {
-            // Jangan menggandakan elemen yang sama.
-            if (!sudahAda.has(element)) {
-                angka.push(teks);
-                sudahAda.add(element);
-            }
+        if (/^\d$/.test(teks)) {
+            angka.push(teks);
         }
     });
 
     return angka;
 }
 
-// Cari induk yang berisi empat bola angka.
 function cariWadahAngka($, bolaPertama) {
     let wadah = bolaPertama.parent();
 
@@ -496,7 +517,6 @@ function cariWadahAngka($, bolaPertama) {
     return bolaPertama.parent();
 }
 
-// Cari tanggal pada elemen dan induk-induknya.
 function cariTanggalRaw($, mulai) {
     let wadah = mulai;
 
@@ -646,7 +666,6 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const { state, game } = req.params;
     const debug = req.query.debug === '1';
 
-    // Whitelist + validasi format.
     const tz = STATE_TZ[state];
 
     if (!tz || !/^[a-z0-9-]+$/.test(game)) {
@@ -658,6 +677,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
     const targetGame = GAME_ALIAS[`${state}/${game}`] || game;
     const targetState = STATE_SLUG[state] || state;
+
     const targetUrl =
         `https://www.lotteryusa.com/${targetState}/${targetGame}/`;
 
@@ -684,29 +704,32 @@ app.get('/api/result/:state/:game', async (req, res) => {
             namaPasaran = `${state} ${game}`.toUpperCase();
         }
 
-        // Blok hasil paling atas.
         const blok = $('.c-game-components').first().length
             ? $('.c-game-components').first()
             : $('main').first();
 
         const tzNow = partsInTZ(new Date(), tz);
 
-        // Jangkar: bola pertama yang bukan Fireball.
-        const bolaPertama = blok.find('[class*="ball"]').filter((i, el) => {
-            return !isFireball($, el);
-        }).first();
+        const bolaPertama = blok
+            .find('[class*="ball"]')
+            .filter((i, el) => !isFireball($, el))
+            .filter((i, el) => /^\d$/.test($(el).text().trim()))
+            .first();
 
         if (!bolaPertama.length) {
-            return res.json({
+            return res.status(422).json({
                 status: 'belum_update',
-                pesan: 'Belum update: angka belum tersedia'
+                pesan: 'Angka hasil tidak ditemukan pada HTML.',
+                ...(debug ? {
+                    url: targetUrl,
+                    judul: $('title').text().trim(),
+                    selector: '.c-game-components [class*="ball"]'
+                } : {})
             });
         }
 
-        // Cari wadah yang memuat angka hasil.
         const wadahAngka = cariWadahAngka($, bolaPertama);
 
-        // Cari tanggal di wadah hasil atau induknya.
         let tglRaw = cariTanggalRaw($, wadahAngka);
 
         if (!tglRaw) {
@@ -718,30 +741,28 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (!tglUndian) {
             return res.status(422).json({
                 status: 'error',
-                pesan: 'Tanggal undian tidak ditemukan pada blok hasil.',
-                detail: (tglRaw || '').slice(0, 100),
-                url: targetUrl
+                pesan: 'Tanggal undian tidak ditemukan atau formatnya tidak dikenali.',
+                ...(debug ? {
+                    detail: (tglRaw || '').slice(0, 200),
+                    url: targetUrl,
+                    judul: $('title').text().trim()
+                } : {})
             });
         }
 
-        if (!tanggalValid(iso(tglUndian))) {
-            return res.status(422).json({
-                status: 'error',
-                pesan: 'Tanggal undian tidak valid.',
-                detail: tglRaw
-            });
-        }
-
-        // Tanggal hasil web tidak boleh lebih baru dari hari ini di zona US.
         if (iso(tglUndian) > iso(tzNow)) {
             return res.json({
                 status: 'belum_update',
                 pesan:
-                    `Belum update: tanggal web ${iso(tglUndian)} lebih baru dari hari ini di ${tz} (${iso(tzNow)})`
+                    `Tanggal hasil web ${iso(tglUndian)} lebih baru daripada tanggal lokal ${iso(tzNow)} di ${tz}.`,
+                ...(debug ? {
+                    url: targetUrl,
+                    tanggal_web: iso(tglUndian),
+                    tanggal_lokal: iso(tzNow)
+                } : {})
             });
         }
 
-        // Terjemahkan tanggal web ke WIB.
         const kunci = `${state}/${game}`;
         const slot = SLOT_WIB[kunci];
         const jam = JADWAL[kunci];
@@ -765,7 +786,6 @@ app.get('/api/result/:state/:game', async (req, res) => {
             );
         }
 
-        // Tanggal WIB hasil harus sama dengan tanggal WIB saat ini.
         const wibUndian = iso(
             partsInTZ(waktuUndian, 'Asia/Jakarta')
         );
@@ -778,14 +798,20 @@ app.get('/api/result/:state/:game', async (req, res) => {
             return res.json({
                 status: 'belum_update',
                 pesan:
-                    `Belum update: hasil di web (${iso(tglUndian)} US) untuk pasaran tanggal ${wibUndian} WIB, hari ini ${wibHariIni} WIB`
+                    `Tanggal hasil WIB (${wibUndian}) berbeda dari tanggal WIB hari ini (${wibHariIni}).`,
+                ...(debug ? {
+                    url: targetUrl,
+                    tanggal_undian_us: iso(tglUndian),
+                    tanggal_undian_wib: wibUndian,
+                    tanggal_hari_ini_wib: wibHariIni,
+                    slot_wib: slot || null,
+                    jadwal_lokal: jam || JAM_DEFAULT
+                } : {})
             });
         }
 
-        // Ambil empat angka utama, abaikan Fireball.
         let angka = ambilAngka($, wadahAngka);
 
-        // Jika wadah belum memuat empat angka, coba induk berikutnya.
         if (angka.length !== 4) {
             let wadah = wadahAngka.parent();
 
@@ -804,10 +830,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
         angka = angka.slice(0, 4);
 
         if (angka.length !== 4) {
-            return res.json({
+            return res.status(422).json({
                 status: 'belum_update',
-                pesan: `Belum update: angka belum lengkap (${angka.length}/4)`,
-                ...(debug ? { tanggal_dibaca: tglRaw } : {})
+                pesan: `Angka belum lengkap (${angka.length}/4).`,
+                ...(debug ? {
+                    url: targetUrl,
+                    tanggal_dibaca: tglRaw,
+                    angka_ditemukan: angka
+                } : {})
             });
         }
 
@@ -832,8 +862,12 @@ app.get('/api/result/:state/:game', async (req, res) => {
     } catch (error) {
         return res.status(500).json({
             status: 'error',
-            pesan: 'Gagal mengambil data dari target',
-            detail: error.message
+            pesan: 'Gagal mengambil data dari target.',
+            detail: error.message,
+            ...(debug ? {
+                url: targetUrl,
+                waktu: dapatkanWaktuWIB()
+            } : {})
         });
     }
 });
