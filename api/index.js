@@ -30,41 +30,42 @@ function getTanggalWIB() {
     return `${hari[now.getDay()]}, ${now.getDate()} ${bulan[now.getMonth()]} ${now.getFullYear()}`;
 }
 
-// --- FUNGSI BANTUAN 3: SCRAPER PROXY GRATIS OTOMATIS (FALLBACK) ---
-async function getFreeProxies() {
-    try {
-        const response = await axios.get('https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt', { timeout: 4000 });
-        return response.data.split('\n').map(p => p.trim()).filter(p => p.includes(':')).slice(0, 10);
-    } catch (e) {
-        return ['103.152.112.162:80', '47.74.152.29:8888', '118.174.204.142:8080'];
-    }
-}
-
-// --- FUNGSI PENGAMBIL DATA (ANTI-BLOCK DENGAN PROXY) ---
+// --- FUNGSI PENGAMBIL DATA (ANTI-CLOUDFLARE & MULTI-PROXY) ---
 async function fetchWithAntiBlock(targetUrl) {
     const headersConfig = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Upgrade-Insecure-Requests': '1'
     };
 
+    // Jalur 1: Koneksi Langsung
     try {
-        const response = await axios.get(targetUrl, { headers: headersConfig, timeout: 8000 });
-        if (response.status === 200) return response.data;
-    } catch (err1) {}
+        const res = await axios.get(targetUrl, { headers: headersConfig, timeout: 5000 });
+        if (res.status === 200 && !res.data.includes('Just a moment...') && !res.data.includes('Attention Required')) {
+            return res.data;
+        }
+    } catch (e) {}
 
-    const proxies = await getFreeProxies();
-    for (let proxy of proxies) {
+    // Jalur 2: Rotasi Web Proxy Bypass
+    const proxyServices = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`
+    ];
+
+    for (let proxyUrl of proxyServices) {
         try {
-            const proxyTargetUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
-            const response = await axios.get(proxyTargetUrl, { timeout: 6000 });
-            if (response.status === 200 && response.data) return response.data;
-        } catch (errProxy) { 
+            const res = await axios.get(proxyUrl, { timeout: 7000 });
+            // Tolak mentah-mentah jika proxy malah mengembalikan halaman Cloudflare
+            if (res.status === 200 && res.data && !res.data.includes('Just a moment...') && !res.data.includes('Attention Required')) {
+                return res.data;
+            }
+        } catch (e) { 
             continue; 
         }
     }
-    throw new Error("Semua jalur akses ditolak oleh target.");
+    
+    throw new Error("Diblokir Cloudflare: Semua jalur akses dicegat oleh keamanan web target.");
 }
 
 
@@ -211,14 +212,15 @@ app.get('/api/result/:state/:game', async (req, res) => {
         const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
         const usMonth = monthNames[usDateObj.getMonth()]; 
 
-        // Hitung kalender besok di Amerika
         const usTomorrowObj = new Date(usDateObj);
         usTomorrowObj.setDate(usTomorrowObj.getDate() + 1);
         const tmrwDay = usTomorrowObj.getDate().toString();
         const tmrwMonth = monthNames[usTomorrowObj.getMonth()];
 
         // 3. BACA SELURUH TEKS HALAMAN & EKSTRAK SEMUA FORMAT TANGGAL
-        let fullText = $('body').text().toLowerCase();
+        let fullText = $('body').text().replace(/\s+/g, ' ').toLowerCase();
+        let pageTitle = $('title').text().trim();
+        
         let dateMatches = fullText.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\,\.\-]*(\d{1,2})/ig);
 
         let webMonth = "";
@@ -226,23 +228,24 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
         if (dateMatches) {
             for (let d of dateMatches) {
-                // Ekstrak bulan dan tanggal spesifik dari setiap kecocokan
                 let parts = d.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\,\.\-]*(\d{1,2})/i);
-                let m = parts[1].toLowerCase();
-                let day = parseInt(parts[2], 10).toString(); // parseInt membuang angka 0 di depan (cth: 09 jadi 9)
+                if (parts) {
+                    let m = parts[1].toLowerCase();
+                    let day = parseInt(parts[2], 10).toString(); 
 
-                // Jika tanggal yang terbaca adalah jadwal "Besok", lewati dan cari tanggal berikutnya
-                if (m === tmrwMonth && day === tmrwDay) continue;
+                    if (m === tmrwMonth && day === tmrwDay) continue;
 
-                // Tanggal pertama yang bukan besok dipastikan adalah tanggal keluaran (Latest Numbers)
-                webMonth = m;
-                webDay = day;
-                break; 
+                    webMonth = m;
+                    webDay = day;
+                    break; 
+                }
             }
         }
 
+        // PESAN DIAGNOSTIK: Jika masih kosong, beri tahu pengguna apakah ini karena Cloudflare / 404
         if (!webMonth || !webDay) {
-             return res.status(400).send(`Data belum update. Tidak ada format teks tanggal yang terbaca di halaman web.`);
+             let infoTeks = fullText.substring(0, 40).replace(/[^a-zA-Z0-9 ]/g, '');
+             return res.status(400).send(`Gagal menemukan tanggal. Judul halaman ditarik: "${pageTitle}". Teks awal: "${infoTeks}...". (Kemungkinan akses URL salah atau dicegat sebagian oleh Cloudflare).`);
         }
 
         // 5. PENGAMAN UTAMA: Cek kecocokan tanggal web vs tanggal Amerika saat ini
@@ -258,15 +261,12 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (bolaPertama.length > 0) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const angka = $(el).text().trim();
-                // Filter !isNaN memastikan elemen bertuliskan "FB:9" otomatis diabaikan,
-                // dan angka_keluar.length < 4 membatasi tarikan murni untuk Pick 4
                 if (angka && angka !== '--' && !isNaN(angka) && angka_keluar.length < 4) {
                     angka_keluar.push(angka);
                 }
             });
         }
 
-        // 7. JIKA BOLA MASIH KOSONG / STRIP
         if (angka_keluar.length === 0) {
             return res.status(400).send("Angka belum tersedia (--).");
         }
