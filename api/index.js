@@ -54,10 +54,11 @@ function dapatkanWaktuWIB() {
 }
 
 function getTanggalWIB() {
-    return new Intl.DateTimeFormat('id-ID', {
-        timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric',
-        month: 'long', year: 'numeric'
-    }).format(new Date());
+    const hari = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
+    const bulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    const { y, m, d } = partsInTZ(new Date(), 'Asia/Jakarta');
+    const hr = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return `${hari[hr]}, ${d} ${bulan[m - 1]} ${y}`;
 }
 
 // Parse tanggal dari teks/atribut. Return {y,m,d} atau null
@@ -113,17 +114,11 @@ async function fetchWithAntiBlock(targetUrl) {
     }
 }
 
-// ================= CACHE SEDERHANA =================
-const cache = new Map();
-const TTL_MS = 30 * 1000;
-
-async function fetchCached(url) {
-    const hit = cache.get(url);
-    if (hit && Date.now() - hit.t < TTL_MS) return hit.v;
-    const v = await fetchWithAntiBlock(url);
-    cache.set(url, { t: Date.now(), v });
-    return v;
-}
+// ================= CACHE HASIL VALID =================
+// Hanya hasil yang sudah lolos validasi (tanggal hari ini + 4 angka)
+// yang di-cache. "Belum update" TIDAK di-cache supaya bot tidak telat.
+const okCache = new Map();
+const OK_TTL_MS = 5 * 60 * 1000;
 
 // ================= DASHBOARD =================
 // (isi HTML dashboard kamu tetap sama, dipersingkat di sini)
@@ -144,8 +139,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const targetGame = GAME_ALIAS[`${state}/${game}`] || game;
     const targetUrl = `https://www.lotteryusa.com/${state}/${targetGame}/`;
 
+    const cacheKey = `${state}/${targetGame}/${iso(partsInTZ(new Date(), tz))}`;
+    const hit = okCache.get(cacheKey);
+    if (hit && Date.now() - hit.t < OK_TTL_MS) {
+        return res.json({ ...hit.v, tanggal_wib: getTanggalWIB() });
+    }
+
     try {
-        const html = await fetchCached(targetUrl);
+        const html = await fetchWithAntiBlock(targetUrl);
         const $ = cheerio.load(html);
 
         let namaPasaran = $('h1').first().text().replace(/winning numbers/i, '')
@@ -156,11 +157,27 @@ app.get('/api/result/:state/:game', async (req, res) => {
             ? $('.c-game-components').first()
             : $('main').first();
 
-        // --- Ambil tanggal DARI BLOK yang sama dengan angka ---
         const tzNow = partsInTZ(new Date(), tz);
-        const timeEl = blok.find('time').first();
-        const tglRaw = timeEl.attr('datetime') || timeEl.text() ||
-                       blok.find('[class*="date"]').first().text();
+
+        // Jangkar: bola pertama yang BUKAN fireball
+        const bolaPertama = blok.find('[class*="ball"]').filter((i, el) => {
+            const cls = ($(el).attr('class') || '').toLowerCase();
+            return !cls.includes('fire') && !$(el).closest('[class*="fire"]').length;
+        }).first();
+
+        if (!bolaPertama.length) {
+            return res.json({ status: 'belum_update', pesan: 'Belum update: angka belum tersedia' });
+        }
+
+        // Naik dari bola sampai ketemu wadah yang memuat tanggal, supaya tanggal
+        // yang dibaca milik hasil yang SAMA dengan angka (bukan jadwal "next draw")
+        let tglRaw = '';
+        let wadah = bolaPertama.parent();
+        for (let i = 0; i < 6 && wadah.length && !tglRaw; i++) {
+            const el = wadah.find('time, [class*="date"]').first();
+            tglRaw = (el.attr('datetime') || el.text() || '').trim();
+            if (!tglRaw) wadah = wadah.parent();
+        }
         const tglUndian = parseTanggal(tglRaw, tzNow);
 
         if (!tglUndian) {
@@ -173,18 +190,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
         // --- Bandingkan dengan HARI INI di zona negara bagian tsb ---
         if (iso(tglUndian) !== iso(tzNow)) {
-            return res.status(409).json({
+            return res.json({
                 status: 'belum_update',
-                pesan: 'Data di web belum untuk hari ini.',
-                tanggal_di_web: iso(tglUndian),
-                tanggal_hari_ini_di_zona: iso(tzNow),
-                zona: tz
+                pesan: `Belum update: web masih ${iso(tglUndian)}, hari ini di ${tz} adalah ${iso(tzNow)}`
             });
         }
 
         // --- Ambil angka utama, abaikan Fireball ---
         const angka = [];
-        const bolaPertama = blok.find('[class*="ball"]').first();
         if (bolaPertama.length) {
             bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
                 const $el = $(el);
@@ -197,20 +210,22 @@ app.get('/api/result/:state/:game', async (req, res) => {
         }
 
         if (angka.length !== 4) {
-            return res.status(422).json({
-                status: 'belum_lengkap',
-                pesan: `Angka belum lengkap (terbaca ${angka.length} dari 4).`
+            return res.json({
+                status: 'belum_update',
+                pesan: `Belum update: angka belum lengkap (${angka.length}/4)`
             });
         }
 
-        res.json({
+        const payload = {
             status: 'sukses',
             pasaran: namaPasaran,
             tanggal_wib: getTanggalWIB(),
             tanggal_undian_us: iso(tglUndian),
             zona_undian: tz,
             angka_keluar: angka.join('')
-        });
+        };
+        okCache.set(cacheKey, { t: Date.now(), v: payload });
+        res.json(payload);
     } catch (error) {
         res.status(500).json({ status: 'error', pesan: 'Gagal mengambil data dari target', detail: error.message });
     }
@@ -219,7 +234,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
 // ================= PASARAN UTAMA =================
 app.get('/api/markets', async (req, res) => {
     try {
-        const html = await fetchCached('https://www.lotteryusa.com/');
+        const html = await fetchWithAntiBlock('https://www.lotteryusa.com/');
         const $ = cheerio.load(html);
         const markets = [];
         const bukanLotre = ['PLAY', 'Play online', 'Daily game stats', 'On this day'];
