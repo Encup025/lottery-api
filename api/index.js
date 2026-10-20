@@ -123,7 +123,7 @@ app.get('/', (req, res) => {
                 </div>
                 <div class="market-card">
                     <h2>🍊 Florida</h2>
-                    <a href="/api/result/florida/pick-4-midday" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/florida/midday-pick-4" target="_blank">Midday Pick 4</a>
                     <a href="/api/result/florida/pick-4-evening" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
@@ -207,7 +207,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (['california', 'oregon'].includes(state)) tz = 'America/Los_Angeles';
         if (state === 'arizona') tz = 'America/Phoenix';
 
-        // 2. AMBIL BULAN DAN TANGGAL ASLI AMERIKA SAAT INI (REAL-TIME)
+        // 2. AM পঞ্চাশ BULAN DAN TANGGAL ASLI AMERIKA SAAT INI (REAL-TIME)
         const usDateObj = new Date(new Date().toLocaleString("en-US", {timeZone: tz}));
         const usDay = usDateObj.getDate().toString();
         const monthNames = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -219,21 +219,30 @@ app.get('/api/result/:state/:game', async (req, res) => {
         // 3. MENGUMPULKAN SEMUA TEKS POTENSIAL TANGGAL DI BLOK RESULT
         let possibleDateTexts = [];
         
-        // Kumpulkan dari tag <time> dan class .date (Yang paling akurat)
-        blokResultTeratas.find('time, [class*="date"]').each((i, el) => {
-            possibleDateTexts.push($(el).text().toLowerCase());
+        // Perluas jaring selector untuk mengantisipasi perubahan struktur (terutama Florida)
+        blokResultTeratas.find('time, [class*="date"], .c-draw-card__draw-date, h2, h3, p, span').each((i, el) => {
+            const teks = $(el).text().trim().toLowerCase();
+            if (teks.length > 5 && teks.length < 50) { // Filter teks yang terlalu panjang/pendek
+                possibleDateTexts.push(teks);
+            }
         });
+
+        // FALLBACK EKSTRIM: Jika masih kosong, bongkar semua teks di dalam blok result baris demi baris
+        if (possibleDateTexts.length === 0) {
+            const teksKasar = blokResultTeratas.text().toLowerCase().split('\n');
+            possibleDateTexts = teksKasar.map(t => t.trim()).filter(t => t.length > 5);
+        }
 
         // 4. DETEKTOR "SAPU BERSIH" (Sweeper Method)
         for (let t of possibleDateTexts) {
-            // Tolak tanggal yang merupakan bagian dari jadwal besok
-            if (t.includes('tomorrow') || t.includes('next')) continue;
+            // Tolak tanggal yang merupakan bagian dari jadwal besok/estimasi
+            if (t.includes('tomorrow') || t.includes('next') || t.includes('estimated')) continue;
             
-            // Ekstrak nama bulan dan angka
+            // Ekstrak nama bulan dan angka (cth: "oct 19" atau "october 19")
             let match = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[^0-9]*(\d+)/i);
             if (match) {
-                webMonth = match[1].toLowerCase(); // cth: "oct"
-                webDay = match[2];                 // cth: "19"
+                webMonth = match[1].toLowerCase(); 
+                webDay = match[2];                 
                 break; // Hentikan sapuan saat tanggal pertama yang valid ditemukan!
             }
         }
