@@ -1,4 +1,3 @@
-
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -226,7 +225,6 @@ function parseTanggal(str, tzNow) {
 }
 
 // ================= JADWAL UNDIAN =================
-// Jam lokal dipertahankan dari konfigurasi sebelumnya.
 const JADWAL = {
     'texas/morning-daily-4': '10:00',
     'texas/day-daily-4': '12:27',
@@ -410,7 +408,7 @@ async function fetchWithAntiBlock(targetUrl) {
         .join(' | ');
 
     throw new Error(
-        `Semua jalur akses LotteryUSA gagal. ${alasan || 'HTML tidak valid'}`
+        `Semua jalur akses gagal. ${alasan || 'HTML tidak valid'}`
     );
 }
 
@@ -552,7 +550,7 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Dashboard API Live Draw USA</title>
+        <title>Dashboard API Live Draw USA & Macau</title>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
             .container { max-width: 1000px; margin: 0 auto; }
@@ -566,17 +564,28 @@ app.get('/', (req, res) => {
             .btn-utama { background: #d32f2f; border-left: 5px solid #d32f2f; }
             .btn-utama a { color: white; background: #b71c1c; }
             .btn-utama a:hover { background: #ff5252; }
+            .macau-card { border-left-color: #e91e63; }
+            .macau-card h2 { color: #e91e63; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Server API Live Draw USA</h1>
+            <h1>🚀 Server API Live Draw USA & Macau</h1>
             <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
             <div class="market-card btn-utama" style="margin-bottom: 20px;">
                 <h2 style="color:white;">🌐 Pasaran Nasional</h2>
                 <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
             </div>
             <div class="grid">
+                <div class="market-card macau-card">
+                    <h2>🇲🇴 Toto Macau (4D)</h2>
+                    <a href="/api/result/macau/1300" target="_blank">Putaran 13:00</a>
+                    <a href="/api/result/macau/1600" target="_blank">Putaran 16:00</a>
+                    <a href="/api/result/macau/1900" target="_blank">Putaran 19:00</a>
+                    <a href="/api/result/macau/2200" target="_blank">Putaran 22:00</a>
+                    <a href="/api/result/macau/2300" target="_blank">Putaran 23:00</a>
+                    <a href="/api/result/macau/0000" target="_blank">Putaran 00:00</a>
+                </div>
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
@@ -661,7 +670,124 @@ app.get('/', (req, res) => {
     res.send(html);
 });
 
-// ================= ENDPOINT HASIL =================
+// ================= ENDPOINT TOTO MACAU PER JAM =================
+app.get('/api/result/macau/:sesi', async (req, res) => {
+    const { sesi } = req.params;
+    const debug = req.query.debug === '1';
+
+    // Format input URL (misal: "1300" menjadi "13:00")
+    let targetJam = '';
+    if (/^\d{4}$/.test(sesi)) {
+        targetJam = `${sesi.slice(0, 2)}:${sesi.slice(2, 4)}`;
+    } else if (/^\d{2}:\d{2}$/.test(sesi)) {
+        targetJam = sesi;
+    } else {
+        return res.status(404).json({
+            status: 'error',
+            pesan: 'Format sesi salah. Gunakan format: 1300, 1600, 1900, 2200, 2300, atau 0000.'
+        });
+    }
+
+    const targetUrl = 'https://www.totomacaupools.com/'; 
+    
+    // Cache per sesi di hari yang sama agar tidak bentrok dengan hari kemarin
+    const wibHariIni = partsInTZ(new Date(), 'Asia/Jakarta');
+    const isoWib = iso(wibHariIni); // Menghasilkan format "YYYY-MM-DD"
+    const cacheKey = `macau_${targetJam}_${isoWib}`;
+    
+    const hit = getCache(cacheKey);
+    if (hit) {
+        return res.json(bentukRespons(hit, debug));
+    }
+
+    try {
+        const html = await fetchWithAntiBlock(targetUrl);
+        const $ = cheerio.load(html);
+
+        let payload = null;
+
+        $('.resultWrapper .container').each((i, el) => {
+            const judul = $(el).find('.event span').text().toUpperCase();
+            if (!judul.includes('4D')) return; // Fokus mencari 4D
+
+            // 1. Ekstrak Jam Web
+            const waktuRaw = $(el).find('.calendar .time').text().trim();
+            const waktuMatch = waktuRaw.match(/(\d{2}:\d{2})/);
+            const jamWeb = waktuMatch ? waktuMatch[1] : '';
+
+            // 2. Ekstrak Tanggal Web
+            const hari = $(el).find('.calendar .day').contents().first().text().trim();
+            const bulanStr = $(el).find('.calendar .month').contents().first().text().trim().toLowerCase();
+            const tahun = $(el).find('.calendar .year').contents().first().text().trim();
+            
+            const tanggalUndian = `${hari} ${bulanStr.toUpperCase()} ${tahun}`;
+
+            // Konversi bulan string (oct) ke angka menggunakan array MONTHS bawaan kode
+            const bulanAngka = MONTHS.indexOf(bulanStr) + 1; 
+            
+            // Format tanggal web menjadi YYYY-MM-DD
+            const isoWeb = `${tahun}-${String(bulanAngka).padStart(2, '0')}-${String(hari).padStart(2, '0')}`;
+
+            // 3. Ekstrak Angka Keluaran
+            let angkaKeluar = [];
+            $(el).find('.results ul li').each((j, li) => {
+                const style = $(li).attr('style') || '';
+                if (style.includes('hidden') || style.includes('none')) return;
+
+                const imgSrc = $(li).find('img').attr('src') || '';
+                const matchAngka = imgSrc.match(/ball-(\d+)\.png/);
+                
+                if (matchAngka) {
+                    angkaKeluar.push(matchAngka[1]);
+                }
+            });
+
+            // 4. VALIDASI GANDA: Cocokkan JAM dan TANGGAL
+            if (jamWeb === targetJam && isoWeb === isoWib) {
+                payload = {
+                    status: 'sukses',
+                    pasaran: `TOTO MACAU ${targetJam} WIB`,
+                    tanggal_wib: tanggalUndian, // Pakai key yang sama dengan US
+                    waktu_undian_wib: `${jamWeb} WIB`,
+                    angka_keluar: angkaKeluar.join('')
+                };
+            } else {
+                // Jika jam cocok tapi tanggal kemarin, atau jam belum cocok
+                payload = {
+                    status: 'belum_update',
+                    pesan: `Data putaran ${targetJam} untuk tanggal ${isoWib} belum tersedia. Web masih menampilkan hasil ${jamWeb} tanggal ${isoWeb}.`,
+                    ...(debug ? { 
+                        req_jam: targetJam, req_tgl: isoWib, 
+                        web_jam: jamWeb, web_tgl: isoWeb 
+                    } : {})
+                };
+            }
+        });
+
+        if (!payload) {
+            return res.status(422).json({
+                status: 'error',
+                pesan: 'Gagal menemukan struktur 4D di halaman Toto Macau.',
+                ...(debug ? { url: targetUrl } : {})
+            });
+        }
+
+        if (payload.status === 'sukses') {
+            setCache(cacheKey, payload);
+        }
+
+        return res.json(bentukRespons(payload, debug));
+
+    } catch (error) {
+        return res.status(500).json({
+            status: 'error',
+            pesan: `Gagal mengakses website Toto Macau.`,
+            detail: error.message
+        });
+    }
+});
+
+// ================= ENDPOINT HASIL (LOTTERY USA) =================
 app.get('/api/result/:state/:game', async (req, res) => {
     const { state, game } = req.params;
     const debug = req.query.debug === '1';
