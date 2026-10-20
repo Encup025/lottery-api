@@ -46,6 +46,67 @@ function partsInTZ(date, tz) {
 const iso = ({ y, m, d }) =>
     `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
+// Selisih zona terhadap UTC (ms) pada waktu tertentu, sudah memperhitungkan DST
+function tzOffsetMs(date, tz) {
+    const f = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit',
+        day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    const p = Object.fromEntries(f.formatToParts(date).map(x => [x.type, x.value]));
+    const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+    return asUTC - Math.floor(date.getTime() / 1000) * 1000;
+}
+
+// Jam dinding lokal (mis. 12:29 di America/New_York) -> Date (instant) yang benar
+function localToDate(y, m, d, hh, mm, tz) {
+    const guess = Date.UTC(y, m - 1, d, hh, mm);
+    let t = guess - tzOffsetMs(new Date(guess), tz);
+    t = guess - tzOffsetMs(new Date(t), tz);
+    return new Date(t);
+}
+
+function jamWIB(date) {
+    return new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).format(date) + ' WIB';
+}
+
+// Jadwal undian dalam JAM LOKAL negara bagian (DST ditangani otomatis).
+// Key = state/game seperti yang dipanggil bot. PERKIRAAN - cocokkan dengan
+// jadwal resmi tiap lotre. Game yang tidak ada di sini memakai waktu sekarang.
+const JADWAL = {
+    'texas/morning-daily-4': '10:00',
+    'texas/day-daily-4': '12:27',
+    'texas/evening-daily-4': '18:00',
+    'texas/night-daily-4': '22:12',
+    'oregon/1-pm-pick-4': '13:00',
+    'oregon/4-pm-pick-4': '16:00',
+    'oregon/7-pm-pick-4': '19:00',
+    'oregon/10-pm-pick-4': '22:00',
+    'kentucky/midday-pick-4': '13:25',
+    'kentucky/pick-4': '23:00',          // cek lagi
+    'florida/pick-4-midday': '13:30',
+    'florida/pick-4-evening': '21:45',
+    'new-york/midday-win-4': '14:30',
+    'new-york/win-4': '22:30',
+    'washington-dc/dc-4-midday': '13:50',
+    'washington-dc/dc-4': '19:50',
+    'north-carolina/midday-pick-4': '15:00',
+    'north-carolina/pick-4': '23:22',
+    'virginia/midday-4': '13:59',
+    'virginia/pick-4': '23:00',
+    'georgia/midday-4': '12:29',
+    'georgia/cash-4-evening': '18:59',
+    'missouri/midday-pick-4': '12:45',   // cek lagi
+    'missouri/pick-4': '21:00',          // cek lagi
+    'indiana/midday-4': '12:59',         // cek lagi
+    'indiana/daily-4': '22:59',          // cek lagi
+    'new-jersey/midday-pick-4': '12:59',
+    'new-jersey/pick-4': '22:57',
+    'california/daily-4': '18:30'
+    // arizona & iowa: belum diisi (jadwal belum dipastikan)
+};
+
 function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', {
         timeZone: 'Asia/Jakarta', year: 'numeric', month: 'long', day: 'numeric',
@@ -53,10 +114,10 @@ function dapatkanWaktuWIB() {
     }) + ' WIB';
 }
 
-function getTanggalWIB() {
+function getTanggalWIB(waktu = new Date()) {
     const hari = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
     const bulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
-    const { y, m, d } = partsInTZ(new Date(), 'Asia/Jakarta');
+    const { y, m, d } = partsInTZ(waktu, 'Asia/Jakarta');
     const hr = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
     return `${hari[hr]}, ${d} ${bulan[m - 1]} ${y}`;
 }
@@ -142,7 +203,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const cacheKey = `${state}/${targetGame}/${iso(partsInTZ(new Date(), tz))}`;
     const hit = okCache.get(cacheKey);
     if (hit && Date.now() - hit.t < OK_TTL_MS) {
-        return res.json({ ...hit.v, tanggal_wib: getTanggalWIB() });
+        return res.json(hit.v.waktu_undian_wib ? hit.v : { ...hit.v, tanggal_wib: getTanggalWIB() });
     }
 
     try {
@@ -216,10 +277,22 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
+        // Terjemahkan tanggal undian US -> WIB memakai jam undian game ini
+        let tglWib = getTanggalWIB();
+        let waktuWib = null;
+        const jam = JADWAL[`${state}/${game}`];
+        if (jam) {
+            const [hh, mm] = jam.split(':').map(Number);
+            const waktuUndian = localToDate(tglUndian.y, tglUndian.m, tglUndian.d, hh, mm, tz);
+            tglWib = getTanggalWIB(waktuUndian);
+            waktuWib = jamWIB(waktuUndian);
+        }
+
         const payload = {
             status: 'sukses',
             pasaran: namaPasaran,
-            tanggal_wib: getTanggalWIB(),
+            tanggal_wib: tglWib,
+            waktu_undian_wib: waktuWib,
             tanggal_undian_us: iso(tglUndian),
             zona_undian: tz,
             angka_keluar: angka.join('')
