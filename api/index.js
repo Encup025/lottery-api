@@ -103,9 +103,16 @@ const JADWAL = {
     'indiana/daily-4': '22:59',          // cek lagi
     'new-jersey/midday-pick-4': '12:59',
     'new-jersey/pick-4': '22:57',
-    'california/daily-4': '18:30'
-    // arizona & iowa: belum diisi (jadwal belum dipastikan)
+    'california/daily-4': '18:30',
+    'arizona/pick-4-midday': '12:05',
+    'arizona/pick-4': '19:00',
+    'iowa/midday-4': '12:20',
+    'iowa/pick-4': '22:00'
 };
+
+// Dipakai untuk game yang belum ada di JADWAL. 13:00 lokal aman untuk undian
+// yang jatuh setelah jam 12:00 (Central) / 10:00 (Arizona): hasilnya +1 hari WIB.
+const JAM_DEFAULT = '13:00';
 
 function dapatkanWaktuWIB() {
     return new Date().toLocaleString('id-ID', {
@@ -180,6 +187,13 @@ async function fetchWithAntiBlock(targetUrl) {
 // yang di-cache. "Belum update" TIDAK di-cache supaya bot tidak telat.
 const okCache = new Map();
 const OK_TTL_MS = 5 * 60 * 1000;
+
+// Respons default RINGKAS (hanya yang dibaca bot). Tambah ?debug=1 untuk info lengkap.
+function bentukRespons(full, debug) {
+    if (debug) return full;
+    const { status, pasaran, tanggal_wib, angka_keluar } = full;
+    return { status, pasaran, tanggal_wib, angka_keluar };
+}
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
@@ -314,7 +328,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const cacheKey = `${state}/${targetGame}/${iso(partsInTZ(new Date(), 'Asia/Jakarta'))}`;
     const hit = okCache.get(cacheKey);
     if (hit && Date.now() - hit.t < OK_TTL_MS) {
-        return res.json(hit.v.waktu_undian_wib ? hit.v : { ...hit.v, tanggal_wib: getTanggalWIB() });
+        return res.json(bentukRespons(hit.v, req.query.debug === '1'));
     }
 
     try {
@@ -368,29 +382,18 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        // Terjemahkan undian ke WIB memakai jam undian game ini
+        // Terjemahkan tanggal web -> WIB (tanggal + jam undian, DST otomatis)
         const jam = JADWAL[`${state}/${game}`];
-        let waktuUndian = null;
-        if (jam) {
-            const [hh, mm] = jam.split(':').map(Number);
-            waktuUndian = localToDate(tglUndian.y, tglUndian.m, tglUndian.d, hh, mm, tz);
-        }
+        const [hh, mm] = (jam || JAM_DEFAULT).split(':').map(Number);
+        const waktuUndian = localToDate(tglUndian.y, tglUndian.m, tglUndian.d, hh, mm, tz);
 
-        if (waktuUndian) {
-            // Tanggal WIB undian harus = hari ini di WIB (sama dengan pandangan bot)
-            const wibUndian = iso(partsInTZ(waktuUndian, 'Asia/Jakarta'));
-            const wibHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
-            if (wibUndian !== wibHariIni) {
-                return res.json({
-                    status: 'belum_update',
-                    pesan: `Belum update: undian di web (${iso(tglUndian)} US) jatuh ${wibUndian} WIB, hari ini ${wibHariIni} WIB`
-                });
-            }
-        } else if (iso(tglUndian) !== iso(tzNow)) {
-            // Tanpa jadwal: fallback, tanggal US harus sama dengan hari ini di zonanya
+        // Tanggal WIB undian harus = hari ini di WIB (sama dengan pandangan bot)
+        const wibUndian = iso(partsInTZ(waktuUndian, 'Asia/Jakarta'));
+        const wibHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+        if (wibUndian !== wibHariIni) {
             return res.json({
                 status: 'belum_update',
-                pesan: `Belum update: web masih ${iso(tglUndian)}, hari ini di ${tz} adalah ${iso(tzNow)}`
+                pesan: `Belum update: undian di web (${iso(tglUndian)} US) jatuh ${wibUndian} WIB, hari ini ${wibHariIni} WIB`
             });
         }
 
@@ -414,8 +417,8 @@ app.get('/api/result/:state/:game', async (req, res) => {
             });
         }
 
-        const tglWib = waktuUndian ? getTanggalWIB(waktuUndian) : getTanggalWIB();
-        const waktuWib = waktuUndian ? jamWIB(waktuUndian) : null;
+        const tglWib = getTanggalWIB(waktuUndian);
+        const waktuWib = jam ? jamWIB(waktuUndian) : null;
 
         const payload = {
             status: 'sukses',
@@ -427,7 +430,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
             angka_keluar: angka.join('')
         };
         okCache.set(cacheKey, { t: Date.now(), v: payload });
-        res.json(payload);
+        res.json(bentukRespons(payload, req.query.debug === '1'));
     } catch (error) {
         res.status(500).json({ status: 'error', pesan: 'Gagal mengambil data dari target', detail: error.message });
     }
