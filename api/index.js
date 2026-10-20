@@ -182,9 +182,120 @@ const okCache = new Map();
 const OK_TTL_MS = 5 * 60 * 1000;
 
 // ================= DASHBOARD =================
-// (isi HTML dashboard kamu tetap sama, dipersingkat di sini)
 app.get('/', (req, res) => {
-    res.send(`<h1>Server API Live Draw USA</h1><p>Waktu Server: ${dapatkanWaktuWIB()}</p>`);
+    const waktuWIB = dapatkanWaktuWIB();
+    const html = `
+    <!DOCTYPE html>
+    <html lang="id">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dashboard API Live Draw USA</title>
+        <style>
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
+            .container { max-width: 1000px; margin: 0 auto; }
+            h1 { color: #00e676; text-align: center; margin-bottom: 5px; }
+            .waktu { text-align: center; color: #aaaaaa; margin-bottom: 30px; font-size: 1.1em; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333;}
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
+            .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
+            .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
+            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; text-align: center; transition: 0.3s;}
+            a:hover { background: #ff9800; color: #121212; }
+            .btn-utama { background: #d32f2f; border-left: 5px solid #d32f2f; }
+            .btn-utama a { color: white; background: #b71c1c; }
+            .btn-utama a:hover { background: #ff5252; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 Server API Live Draw USA</h1>
+            <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
+            <div class="market-card btn-utama" style="margin-bottom: 20px;">
+                <h2 style="color:white;">🌐 Pasaran Nasional</h2>
+                <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
+            </div>
+            <div class="grid">
+                <div class="market-card">
+                    <h2>⭐ Texas</h2>
+                    <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
+                    <a href="/api/result/texas/day-daily-4" target="_blank">Day Daily 4</a>
+                    <a href="/api/result/texas/evening-daily-4" target="_blank">Evening Daily 4</a>
+                    <a href="/api/result/texas/night-daily-4" target="_blank">Night Daily 4</a>
+                </div>
+                <div class="market-card">
+                    <h2>🌲 Oregon</h2>
+                    <a href="/api/result/oregon/1-pm-pick-4" target="_blank">Oregon 3 (1 PM)</a>
+                    <a href="/api/result/oregon/4-pm-pick-4" target="_blank">Oregon 6 (4 PM)</a>
+                    <a href="/api/result/oregon/7-pm-pick-4" target="_blank">Oregon 9 (7 PM)</a>
+                    <a href="/api/result/oregon/10-pm-pick-4" target="_blank">Oregon 12 (10 PM)</a>
+                </div>
+                <div class="market-card">
+                    <h2>🍗 Kentucky</h2>
+                    <a href="/api/result/kentucky/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/kentucky/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🍊 Florida</h2>
+                    <a href="/api/result/florida/pick-4-midday" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/florida/pick-4-evening" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🗽 New York</h2>
+                    <a href="/api/result/new-york/midday-win-4" target="_blank">Midday Win 4</a>
+                    <a href="/api/result/new-york/win-4" target="_blank">Win 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🏛️ Washington DC</h2>
+                    <a href="/api/result/washington-dc/dc-4-midday" target="_blank">DC-4 Midday</a>
+                    <a href="/api/result/washington-dc/dc-4" target="_blank">DC-4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🌲 North Carolina</h2>
+                    <a href="/api/result/north-carolina/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/north-carolina/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🦅 Virginia</h2>
+                    <a href="/api/result/virginia/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/virginia/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🍑 Georgia</h2>
+                    <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🐻 Missouri</h2>
+                    <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/missouri/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🏎️ Indiana & NJ</h2>
+                    <a href="/api/result/indiana/midday-4" target="_blank">IN Midday 4</a>
+                    <a href="/api/result/indiana/daily-4" target="_blank">IN Daily 4</a>
+                    <a href="/api/result/new-jersey/midday-pick-4" target="_blank">NJ Midday Pick 4</a>
+                    <a href="/api/result/new-jersey/pick-4" target="_blank">NJ Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🏖️ California</h2>
+                    <a href="/api/result/california/daily-4" target="_blank">Daily 4</a>
+                </div>
+                <div class="market-card">
+                    <h2>🌵 Arizona</h2>
+                    <a href="/api/result/arizona/pick-4-midday" target="_blank">Midday Pick 4</a>
+                    <a href="/api/result/arizona/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+                <div class="market-card">
+                    <h2>🌽 Iowa</h2>
+                    <a href="/api/result/iowa/midday-4" target="_blank">Midday 4</a>
+                    <a href="/api/result/iowa/pick-4" target="_blank">Pick 4 Evening</a>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+    res.send(html);
 });
 
 // ================= ENDPOINT HASIL =================
