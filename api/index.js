@@ -1,3 +1,4 @@
+
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -14,7 +15,7 @@ const STATE_TZ = {
     'california': 'America/Los_Angeles',
     'oregon': 'America/Los_Angeles',
     'arizona': 'America/Phoenix',
-    'indiana': 'America/Indiana/Indianapolis', // Eastern
+    'indiana': 'America/Indiana/Indianapolis',
     'kentucky': 'America/New_York',
     'florida': 'America/New_York',
     'new-york': 'America/New_York',
@@ -25,179 +26,506 @@ const STATE_TZ = {
     'new-jersey': 'America/New_York'
 };
 
-// Alias URL: key = state/game dari bot, value = game di web target
+// Slug Washington DC pada LotteryUSA berbeda dengan endpoint bot.
+const STATE_SLUG = {
+    'washington-dc': 'district-of-columbia'
+};
+
+// Alias URL: key = state/game dari bot, value = game di web target.
 const GAME_ALIAS = {
     'florida/pick-4-midday': 'midday-pick-4',
     'florida/pick-4-evening': 'pick-4',
-    'kentucky/pick-4-evening': 'pick-4'
+    'kentucky/pick-4-evening': 'pick-4',
+    'georgia/cash-4-evening': 'cash-4'
 };
 
-const MONTHS = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+const MONTHS = [
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+    'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+];
 
-// Ambil Y/M/D di zona tertentu TANPA trik new Date(toLocaleString)
+// ================= HELPER TANGGAL =================
+
+// Ambil Y/M/D di zona tertentu.
 function partsInTZ(date, tz) {
     const f = new Intl.DateTimeFormat('en-CA', {
-        timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+        timeZone: tz,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
     });
-    const p = Object.fromEntries(f.formatToParts(date).map(x => [x.type, x.value]));
-    return { y: +p.year, m: +p.month, d: +p.day };
+
+    const p = Object.fromEntries(
+        f.formatToParts(date).map(x => [x.type, x.value])
+    );
+
+    return {
+        y: Number(p.year),
+        m: Number(p.month),
+        d: Number(p.day)
+    };
 }
 
 const iso = ({ y, m, d }) =>
     `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 
-// Selisih zona terhadap UTC (ms) pada waktu tertentu, sudah memperhitungkan DST
+// Pastikan tanggal ISO benar-benar ada di kalender.
+function tanggalValid(value) {
+    if (!value) return false;
+
+    const match = String(value).match(
+        /^(\d{4})-(\d{2})-(\d{2})$/
+    );
+
+    if (!match) return false;
+
+    const y = Number(match[1]);
+    const m = Number(match[2]);
+    const d = Number(match[3]);
+
+    const date = new Date(Date.UTC(y, m - 1, d));
+
+    return (
+        date.getUTCFullYear() === y &&
+        date.getUTCMonth() === m - 1 &&
+        date.getUTCDate() === d
+    );
+}
+
+// Selisih zona terhadap UTC dalam milidetik, memperhitungkan DST.
 function tzOffsetMs(date, tz) {
     const f = new Intl.DateTimeFormat('en-US', {
-        timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit',
-        day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit'
+        timeZone: tz,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
     });
-    const p = Object.fromEntries(f.formatToParts(date).map(x => [x.type, x.value]));
-    const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+
+    const p = Object.fromEntries(
+        f.formatToParts(date).map(x => [x.type, x.value])
+    );
+
+    const asUTC = Date.UTC(
+        Number(p.year),
+        Number(p.month) - 1,
+        Number(p.day),
+        Number(p.hour),
+        Number(p.minute),
+        Number(p.second)
+    );
+
     return asUTC - Math.floor(date.getTime() / 1000) * 1000;
 }
 
-// Jam dinding lokal (mis. 12:29 di America/New_York) -> Date (instant) yang benar
+// Jam dinding lokal menjadi instant Date.
 function localToDate(y, m, d, hh, mm, tz) {
     const guess = Date.UTC(y, m - 1, d, hh, mm);
+
     let t = guess - tzOffsetMs(new Date(guess), tz);
     t = guess - tzOffsetMs(new Date(t), tz);
+
     return new Date(t);
 }
 
 function jamWIB(date) {
     return new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+        timeZone: 'Asia/Jakarta',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23'
     }).format(date) + ' WIB';
 }
 
-// Jadwal undian dalam JAM LOKAL negara bagian (DST ditangani otomatis).
-// Key = state/game seperti yang dipanggil bot. PERKIRAAN - cocokkan dengan
-// jadwal resmi tiap lotre. Game yang tidak ada di sini memakai waktu sekarang.
+function dapatkanWaktuWIB() {
+    return new Date().toLocaleString('id-ID', {
+        timeZone: 'Asia/Jakarta',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }) + ' WIB';
+}
+
+function getTanggalWIB(waktu = new Date()) {
+    const hari = [
+        'Minggu', 'Senin', 'Selasa', 'Rabu',
+        'Kamis', 'Jumat', 'Sabtu'
+    ];
+
+    const bulan = [
+        'Januari', 'Februari', 'Maret', 'April',
+        'Mei', 'Juni', 'Juli', 'Agustus',
+        'September', 'Oktober', 'November', 'Desember'
+    ];
+
+    const { y, m, d } = partsInTZ(waktu, 'Asia/Jakarta');
+    const hr = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+
+    return `${hari[hr]}, ${d} ${bulan[m - 1]} ${y}`;
+}
+
+// Parse tanggal ISO, "Oct 19, 2026", atau "October 19".
+function parseTanggal(str, tzNow) {
+    if (!str) return null;
+
+    str = String(str).toLowerCase().trim();
+
+    // Format ISO: 2026-10-19
+    let match = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+
+    if (match) {
+        const hasil = {
+            y: Number(match[1]),
+            m: Number(match[2]),
+            d: Number(match[3])
+        };
+
+        return tanggalValid(iso(hasil)) ? hasil : null;
+    }
+
+    // Format: "oct 19, 2026" / "october 19".
+    match = str.match(
+        /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?!\d)(?:,?\s*(\d{4}))?/
+    );
+
+    if (match) {
+        const bulan = MONTHS.indexOf(match[1]) + 1;
+        let tahun = match[3] ? Number(match[3]) : tzNow.y;
+
+        // Jika tahun tidak tercantum, tangani pergantian tahun.
+        if (!match[3] && bulan > tzNow.m + 1) {
+            tahun -= 1;
+        } else if (!match[3] && tzNow.m === 1 && bulan === 12) {
+            tahun -= 1;
+        }
+
+        const hasil = {
+            y: tahun,
+            m: bulan,
+            d: Number(match[2])
+        };
+
+        return tanggalValid(iso(hasil)) ? hasil : null;
+    }
+
+    return null;
+}
+
+// ================= JADWAL UNDIAN =================
+// Jam lokal negara bagian. Nilai dipertahankan dari kode asli.
 const JADWAL = {
     'texas/morning-daily-4': '10:00',
     'texas/day-daily-4': '12:27',
     'texas/evening-daily-4': '18:00',
     'texas/night-daily-4': '22:12',
+
     'oregon/1-pm-pick-4': '13:00',
     'oregon/4-pm-pick-4': '16:00',
     'oregon/7-pm-pick-4': '19:00',
     'oregon/10-pm-pick-4': '22:00',
+
     'kentucky/midday-pick-4': '13:25',
-    'kentucky/pick-4': '23:00',          // cek lagi
+    'kentucky/pick-4': '23:00',
+
     'florida/pick-4-midday': '13:30',
     'florida/pick-4-evening': '21:45',
+
     'new-york/midday-win-4': '14:30',
     'new-york/win-4': '22:30',
+
     'washington-dc/dc-4-midday': '13:50',
     'washington-dc/dc-4': '19:50',
+
     'north-carolina/midday-pick-4': '15:00',
     'north-carolina/pick-4': '23:22',
+
     'virginia/midday-4': '13:59',
     'virginia/pick-4': '23:00',
+
     'georgia/midday-4': '12:29',
     'georgia/cash-4-evening': '18:59',
-    'missouri/midday-pick-4': '12:45',   // cek lagi
-    'missouri/pick-4': '21:00',          // cek lagi
-    'indiana/midday-4': '12:59',         // cek lagi
-    'indiana/daily-4': '22:59',          // cek lagi
+
+    'missouri/midday-pick-4': '12:45',
+    'missouri/pick-4': '21:00',
+
+    'indiana/midday-4': '12:59',
+    'indiana/daily-4': '22:59',
+
     'new-jersey/midday-pick-4': '12:59',
     'new-jersey/pick-4': '22:57',
+
     'california/daily-4': '18:30',
+
     'arizona/pick-4-midday': '12:05',
     'arizona/pick-4': '19:00',
+
     'iowa/midday-4': '12:20',
     'iowa/pick-4': '22:00'
 };
 
-// Dipakai untuk game yang belum ada di JADWAL. 13:00 lokal aman untuk undian
-// yang jatuh setelah jam 12:00 (Central) / 10:00 (Arizona): hasilnya +1 hari WIB.
 const JAM_DEFAULT = '13:00';
 
-function dapatkanWaktuWIB() {
-    return new Date().toLocaleString('id-ID', {
-        timeZone: 'Asia/Jakarta', year: 'numeric', month: 'long', day: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-    }) + ' WIB';
-}
+// Slot pasaran pada konfigurasi bot (WIB).
+const SLOT_WIB = {
+    'kentucky/midday-pick-4': '00:11',
+    'florida/pick-4-midday': '00:21',
+    'texas/day-daily-4': '00:30',
+    'washington-dc/dc-4-midday': '00:55',
+    'virginia/midday-4': '01:00',
+    'new-jersey/midday-pick-4': '01:00',
+    'new-york/midday-win-4': '01:15',
+    'iowa/midday-4': '01:30',
+    'north-carolina/midday-pick-4': '01:51',
+    'oregon/1-pm-pick-4': '02:51',
+    'arizona/pick-4-midday': '03:00',
+    'oregon/4-pm-pick-4': '05:51',
+    'texas/evening-daily-4': '06:00',
+    'washington-dc/dc-4': '07:00',
+    'florida/pick-4-evening': '08:35',
+    'oregon/7-pm-pick-4': '08:51',
+    'arizona/pick-4': '09:00',
+    'new-york/win-4': '09:25',
+    'kentucky/pick-4': '09:51',
+    'virginia/pick-4': '10:00',
+    'iowa/pick-4': '10:00',
+    'north-carolina/pick-4': '10:12',
+    'california/daily-4': '10:13',
+    'texas/night-daily-4': '10:15',
+    'oregon/10-pm-pick-4': '11:51',
+    'texas/morning-daily-4': '22:00'
+};
 
-function getTanggalWIB(waktu = new Date()) {
-    const hari = ['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'];
-    const bulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
-    const { y, m, d } = partsInTZ(waktu, 'Asia/Jakarta');
-    const hr = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-    return `${hari[hr]}, ${d} ${bulan[m - 1]} ${y}`;
-}
+// Cari instant pada tanggal lokal US yang sesuai dengan slot WIB.
+function slotWIB(tglUS, tz, slot) {
+    const [hh, mm] = slot.split(':').map(Number);
 
-// Parse tanggal dari teks/atribut. Return {y,m,d} atau null
-function parseTanggal(str, tzNow) {
-    if (!str) return null;
-    str = str.toLowerCase();
+    const mulai = localToDate(
+        tglUS.y, tglUS.m, tglUS.d, 0, 0, tz
+    );
 
-    // Format ISO: 2026-10-19
-    let m = str.match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (m) return { y: +m[1], m: +m[2], d: +m[3] };
+    const tanggalBerikutnya = new Date(
+        Date.UTC(tglUS.y, tglUS.m - 1, tglUS.d + 1)
+    );
 
-    // Format: "oct 19, 2026" / "october 19" (tahun opsional)
-    m = str.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?!\d)(?:,?\s*(\d{4}))?/);
-    if (m) {
-        const bulan = MONTHS.indexOf(m[1]) + 1;
-        let tahun = m[3] ? +m[3] : tzNow.y;
-        // Tanpa tahun & bulan "di masa depan" = tahun lalu (mis. Des dibaca di Jan)
-        if (!m[3] && bulan > tzNow.m + 1) tahun -= 1;
-        return { y: tahun, m: bulan, d: +m[2] };
+    const selesai = localToDate(
+        tanggalBerikutnya.getUTCFullYear(),
+        tanggalBerikutnya.getUTCMonth() + 1,
+        tanggalBerikutnya.getUTCDate(),
+        0, 0, tz
+    );
+
+    const w = partsInTZ(mulai, 'Asia/Jakarta');
+
+    for (let add = 0; add <= 1; add++) {
+        const candidate = localToDate(
+            w.y, w.m, w.d + add, hh, mm, 'Asia/Jakarta'
+        );
+
+        if (candidate >= mulai && candidate < selesai) {
+            return candidate;
+        }
     }
+
     return null;
 }
 
-// ================= FETCH ANTI BLOK (PARALEL) =================
+// ================= FETCH ANTI BLOK =================
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9'
 };
 
-const diblokCF = (data) =>
+const diblokCF = data =>
     typeof data !== 'string' ||
     data.includes('Just a moment...') ||
     data.includes('Attention Required');
 
 async function ambil(url, headers) {
-    const res = await axios.get(url, { headers, timeout: 4500 });
-    if (res.status !== 200 || diblokCF(res.data)) throw new Error('blocked');
+    const res = await axios.get(url, {
+        headers,
+        timeout: 4500,
+        responseType: 'text',
+        maxRedirects: 5
+    });
+
+    if (res.status !== 200 || diblokCF(res.data)) {
+        throw new Error('blocked');
+    }
+
     return res.data;
 }
 
 async function fetchWithAntiBlock(targetUrl) {
     const enc = encodeURIComponent(targetUrl);
+
     try {
-        // Ambil yang pertama berhasil, jadi total waktu maksimal ~4.5 detik
         return await Promise.any([
             ambil(targetUrl, HEADERS),
             ambil(`https://api.allorigins.win/raw?url=${enc}`, {}),
             ambil(`https://api.codetabs.com/v1/proxy?quest=${enc}`, {})
         ]);
-    } catch (e) {
-        throw new Error('Diblokir Cloudflare: semua jalur akses gagal.');
+    } catch (error) {
+        throw new Error(
+            'Diblokir Cloudflare: semua jalur akses gagal.'
+        );
     }
 }
 
 // ================= CACHE HASIL VALID =================
-// Hanya hasil yang sudah lolos validasi (tanggal hari ini + 4 angka)
-// yang di-cache. "Belum update" TIDAK di-cache supaya bot tidak telat.
 const okCache = new Map();
 const OK_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 200;
 
-// Respons default RINGKAS (hanya yang dibaca bot). Tambah ?debug=1 untuk info lengkap.
+function getCache(key) {
+    const item = okCache.get(key);
+
+    if (!item) return null;
+
+    if (Date.now() - item.t >= OK_TTL_MS) {
+        okCache.delete(key);
+        return null;
+    }
+
+    return item.v;
+}
+
+function setCache(key, value) {
+    // Hapus entri kedaluwarsa.
+    for (const [cacheKey, item] of okCache.entries()) {
+        if (Date.now() - item.t >= OK_TTL_MS) {
+            okCache.delete(cacheKey);
+        }
+    }
+
+    // Batasi ukuran cache.
+    while (
+        !okCache.has(key) &&
+        okCache.size >= CACHE_MAX_ENTRIES
+    ) {
+        const oldestKey = okCache.keys().next().value;
+
+        if (oldestKey === undefined) break;
+
+        okCache.delete(oldestKey);
+    }
+
+    okCache.delete(key);
+    okCache.set(key, {
+        t: Date.now(),
+        v: value
+    });
+}
+
+// Respons default ringkas; ?debug=1 untuk detail.
 function bentukRespons(full, debug) {
     if (debug) return full;
-    const { status, pasaran, tanggal_wib, angka_keluar } = full;
-    return { status, pasaran, tanggal_wib, angka_keluar };
+
+    const {
+        status,
+        pasaran,
+        tanggal_wib,
+        angka_keluar
+    } = full;
+
+    return {
+        status,
+        pasaran,
+        tanggal_wib,
+        angka_keluar
+    };
+}
+
+// ================= HELPER PARSER HASIL =================
+
+// Deteksi bola Fireball dan turunannya.
+function isFireball($, element) {
+    const cls = ($(element).attr('class') || '').toLowerCase();
+
+    return (
+        cls.includes('fire') ||
+        $(element).closest('[class*="fire"]').length > 0
+    );
+}
+
+// Ambil angka satu digit, tidak termasuk Fireball.
+function ambilAngka($, wadah) {
+    const angka = [];
+    const sudahAda = new Set();
+
+    wadah.find('[class*="ball"]').each((i, element) => {
+        if (isFireball($, element)) return;
+
+        const teks = $(element).text().trim();
+
+        if (/^\d$/.test(teks) && angka.length < 4) {
+            // Jangan menggandakan elemen yang sama.
+            if (!sudahAda.has(element)) {
+                angka.push(teks);
+                sudahAda.add(element);
+            }
+        }
+    });
+
+    return angka;
+}
+
+// Cari induk yang berisi empat bola angka.
+function cariWadahAngka($, bolaPertama) {
+    let wadah = bolaPertama.parent();
+
+    for (let i = 0; i < 8 && wadah.length; i++) {
+        const angka = ambilAngka($, wadah);
+
+        if (angka.length >= 4) {
+            return wadah;
+        }
+
+        wadah = wadah.parent();
+    }
+
+    return bolaPertama.parent();
+}
+
+// Cari tanggal pada elemen dan induk-induknya.
+function cariTanggalRaw($, mulai) {
+    let wadah = mulai;
+
+    for (let i = 0; i < 8 && wadah.length; i++) {
+        const elemenTanggal = wadah.find(
+            'time, [class*="date"]'
+        ).first();
+
+        if (elemenTanggal.length) {
+            const datetime = (
+                elemenTanggal.attr('datetime') || ''
+            ).trim();
+
+            const teks = elemenTanggal.text().trim();
+            const raw = datetime || teks;
+
+            if (raw) return raw;
+        }
+
+        wadah = wadah.parent();
+    }
+
+    return '';
 }
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
     const waktuWIB = dapatkanWaktuWIB();
+
     const html = `
     <!DOCTYPE html>
     <html lang="id">
@@ -309,116 +637,184 @@ app.get('/', (req, res) => {
     </body>
     </html>
     `;
+
     res.send(html);
 });
 
 // ================= ENDPOINT HASIL =================
 app.get('/api/result/:state/:game', async (req, res) => {
     const { state, game } = req.params;
+    const debug = req.query.debug === '1';
 
-    // Whitelist + validasi format
+    // Whitelist + validasi format.
     const tz = STATE_TZ[state];
+
     if (!tz || !/^[a-z0-9-]+$/.test(game)) {
-        return res.status(404).json({ status: 'error', pesan: 'State atau game tidak dikenal.' });
+        return res.status(404).json({
+            status: 'error',
+            pesan: 'State atau game tidak dikenal.'
+        });
     }
 
     const targetGame = GAME_ALIAS[`${state}/${game}`] || game;
-    const targetUrl = `https://www.lotteryusa.com/${state}/${targetGame}/`;
+    const targetState = STATE_SLUG[state] || state;
+    const targetUrl =
+        `https://www.lotteryusa.com/${targetState}/${targetGame}/`;
 
-    const cacheKey = `${state}/${targetGame}/${iso(partsInTZ(new Date(), 'Asia/Jakarta'))}`;
-    const hit = okCache.get(cacheKey);
-    if (hit && Date.now() - hit.t < OK_TTL_MS) {
-        return res.json(bentukRespons(hit.v, req.query.debug === '1'));
+    const cacheKey =
+        `${state}/${game}/${iso(partsInTZ(new Date(), 'Asia/Jakarta'))}`;
+
+    const hit = getCache(cacheKey);
+
+    if (hit) {
+        return res.json(bentukRespons(hit, debug));
     }
 
     try {
         const html = await fetchWithAntiBlock(targetUrl);
         const $ = cheerio.load(html);
 
-        let namaPasaran = $('h1').first().text().replace(/winning numbers/i, '')
-            .replace(/\s+/g, ' ').trim().toUpperCase() || `${state} ${game}`.toUpperCase();
+        let namaPasaran = $('h1').first().text()
+            .replace(/winning numbers/i, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toUpperCase();
 
-        // Blok hasil paling atas
+        if (!namaPasaran) {
+            namaPasaran = `${state} ${game}`.toUpperCase();
+        }
+
+        // Blok hasil paling atas.
         const blok = $('.c-game-components').first().length
             ? $('.c-game-components').first()
             : $('main').first();
 
         const tzNow = partsInTZ(new Date(), tz);
 
-        // Jangkar: bola pertama yang BUKAN fireball
+        // Jangkar: bola pertama yang bukan Fireball.
         const bolaPertama = blok.find('[class*="ball"]').filter((i, el) => {
-            const cls = ($(el).attr('class') || '').toLowerCase();
-            return !cls.includes('fire') && !$(el).closest('[class*="fire"]').length;
+            return !isFireball($, el);
         }).first();
 
         if (!bolaPertama.length) {
-            return res.json({ status: 'belum_update', pesan: 'Belum update: angka belum tersedia' });
+            return res.json({
+                status: 'belum_update',
+                pesan: 'Belum update: angka belum tersedia'
+            });
         }
 
-        // Naik dari bola sampai ketemu wadah yang memuat tanggal, supaya tanggal
-        // yang dibaca milik hasil yang SAMA dengan angka (bukan jadwal "next draw")
-        let tglRaw = '';
-        let wadah = bolaPertama.parent();
-        for (let i = 0; i < 6 && wadah.length && !tglRaw; i++) {
-            const el = wadah.find('time, [class*="date"]').first();
-            tglRaw = (el.attr('datetime') || el.text() || '').trim();
-            if (!tglRaw) wadah = wadah.parent();
+        // Cari wadah yang memuat angka hasil.
+        const wadahAngka = cariWadahAngka($, bolaPertama);
+
+        // Cari tanggal di wadah hasil atau induknya.
+        let tglRaw = cariTanggalRaw($, wadahAngka);
+
+        if (!tglRaw) {
+            tglRaw = cariTanggalRaw($, bolaPertama.parent());
         }
+
         const tglUndian = parseTanggal(tglRaw, tzNow);
 
         if (!tglUndian) {
             return res.status(422).json({
                 status: 'error',
                 pesan: 'Tanggal undian tidak ditemukan pada blok hasil.',
-                detail: (tglRaw || '').slice(0, 60)
+                detail: (tglRaw || '').slice(0, 100),
+                url: targetUrl
             });
         }
 
-        // Tanggal di web tidak boleh lebih baru dari hari ini di zona US-nya
+        if (!tanggalValid(iso(tglUndian))) {
+            return res.status(422).json({
+                status: 'error',
+                pesan: 'Tanggal undian tidak valid.',
+                detail: tglRaw
+            });
+        }
+
+        // Tanggal hasil web tidak boleh lebih baru dari hari ini di zona US.
         if (iso(tglUndian) > iso(tzNow)) {
             return res.json({
                 status: 'belum_update',
-                pesan: `Belum update: tanggal web ${iso(tglUndian)} lebih baru dari hari ini di ${tz} (${iso(tzNow)})`
+                pesan:
+                    `Belum update: tanggal web ${iso(tglUndian)} lebih baru dari hari ini di ${tz} (${iso(tzNow)})`
             });
         }
 
-        // Terjemahkan tanggal web -> WIB (tanggal + jam undian, DST otomatis)
-        const jam = JADWAL[`${state}/${game}`];
-        const [hh, mm] = (jam || JAM_DEFAULT).split(':').map(Number);
-        const waktuUndian = localToDate(tglUndian.y, tglUndian.m, tglUndian.d, hh, mm, tz);
+        // Terjemahkan tanggal web ke WIB.
+        const kunci = `${state}/${game}`;
+        const slot = SLOT_WIB[kunci];
+        const jam = JADWAL[kunci];
 
-        // Tanggal WIB undian harus = hari ini di WIB (sama dengan pandangan bot)
-        const wibUndian = iso(partsInTZ(waktuUndian, 'Asia/Jakarta'));
-        const wibHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+        let waktuUndian = slot
+            ? slotWIB(tglUndian, tz, slot)
+            : null;
+
+        if (!waktuUndian) {
+            const [hh, mm] = (jam || JAM_DEFAULT)
+                .split(':')
+                .map(Number);
+
+            waktuUndian = localToDate(
+                tglUndian.y,
+                tglUndian.m,
+                tglUndian.d,
+                hh,
+                mm,
+                tz
+            );
+        }
+
+        // Tanggal WIB hasil harus sama dengan tanggal WIB saat ini.
+        const wibUndian = iso(
+            partsInTZ(waktuUndian, 'Asia/Jakarta')
+        );
+
+        const wibHariIni = iso(
+            partsInTZ(new Date(), 'Asia/Jakarta')
+        );
+
         if (wibUndian !== wibHariIni) {
             return res.json({
                 status: 'belum_update',
-                pesan: `Belum update: undian di web (${iso(tglUndian)} US) jatuh ${wibUndian} WIB, hari ini ${wibHariIni} WIB`
+                pesan:
+                    `Belum update: hasil di web (${iso(tglUndian)} US) untuk pasaran tanggal ${wibUndian} WIB, hari ini ${wibHariIni} WIB`
             });
         }
 
-        // --- Ambil angka utama, abaikan Fireball ---
-        const angka = [];
-        if (bolaPertama.length) {
-            bolaPertama.parent().find('[class*="ball"]').each((i, el) => {
-                const $el = $(el);
-                const cls = ($el.attr('class') || '').toLowerCase();
-                if (cls.includes('fire')) return;            // skip fireball
-                if ($el.closest('[class*="fire"]').length) return;
-                const t = $el.text().trim();
-                if (/^\d$/.test(t) && angka.length < 4) angka.push(t);
-            });
+        // Ambil empat angka utama, abaikan Fireball.
+        let angka = ambilAngka($, wadahAngka);
+
+        // Jika wadah belum memuat empat angka, coba induk berikutnya.
+        if (angka.length !== 4) {
+            let wadah = wadahAngka.parent();
+
+            for (let i = 0; i < 5 && wadah.length; i++) {
+                const kandidat = ambilAngka($, wadah);
+
+                if (kandidat.length >= 4) {
+                    angka = kandidat.slice(0, 4);
+                    break;
+                }
+
+                wadah = wadah.parent();
+            }
         }
+
+        angka = angka.slice(0, 4);
 
         if (angka.length !== 4) {
             return res.json({
                 status: 'belum_update',
-                pesan: `Belum update: angka belum lengkap (${angka.length}/4)`
+                pesan: `Belum update: angka belum lengkap (${angka.length}/4)`,
+                ...(debug ? { tanggal_dibaca: tglRaw } : {})
             });
         }
 
         const tglWib = getTanggalWIB(waktuUndian);
-        const waktuWib = jam ? jamWIB(waktuUndian) : null;
+        const waktuWib = (slot || jam)
+            ? jamWIB(waktuUndian)
+            : null;
 
         const payload = {
             status: 'sukses',
@@ -429,50 +825,113 @@ app.get('/api/result/:state/:game', async (req, res) => {
             zona_undian: tz,
             angka_keluar: angka.join('')
         };
-        okCache.set(cacheKey, { t: Date.now(), v: payload });
-        res.json(bentukRespons(payload, req.query.debug === '1'));
+
+        setCache(cacheKey, payload);
+
+        return res.json(bentukRespons(payload, debug));
     } catch (error) {
-        res.status(500).json({ status: 'error', pesan: 'Gagal mengambil data dari target', detail: error.message });
+        return res.status(500).json({
+            status: 'error',
+            pesan: 'Gagal mengambil data dari target',
+            detail: error.message
+        });
     }
 });
 
 // ================= PASARAN UTAMA =================
 app.get('/api/markets', async (req, res) => {
     try {
-        const html = await fetchWithAntiBlock('https://www.lotteryusa.com/');
+        const html = await fetchWithAntiBlock(
+            'https://www.lotteryusa.com/'
+        );
+
         const $ = cheerio.load(html);
         const markets = [];
-        const bukanLotre = ['PLAY', 'Play online', 'Daily game stats', 'On this day'];
+
+        const bukanLotre = [
+            'PLAY',
+            'Play online',
+            'Daily game stats',
+            'On this day'
+        ];
 
         $('h3').each((i, element) => {
             const nama = $(element).text().trim();
-            if (!nama || bukanLotre.includes(nama) || nama.includes('?') || nama.length > 25) return;
+
+            if (
+                !nama ||
+                bukanLotre.includes(nama) ||
+                nama.includes('?') ||
+                nama.length > 25
+            ) {
+                return;
+            }
 
             let parent = $(element).parent();
-            let angka = [], tanggal = 'Belum diundi', jackpot = 'N/A';
+            let angka = [];
+            let tanggal = 'Belum diundi';
+            let jackpot = 'N/A';
 
             for (let level = 0; level < 5; level++) {
                 parent.find('[class*="ball"]').each((j, b) => {
+                    if (isFireball($, b)) return;
+
                     const t = $(b).text().trim();
-                    if (t && t.length <= 3) angka.push(t);
+
+                    if (t && t.length <= 3) {
+                        angka.push(t);
+                    }
                 });
+
                 if (angka.length > 0) {
-                    tanggal = parent.find('time, [class*="date"]').first().text().trim() || tanggal;
-                    parent.find('[class*="jackpot"], [class*="prize"]').each((j, jp) => {
+                    const elemenTanggal = parent
+                        .find('time, [class*="date"]')
+                        .first();
+
+                    tanggal =
+                        elemenTanggal.attr('datetime') ||
+                        elemenTanggal.text().trim() ||
+                        tanggal;
+
+                    parent.find(
+                        '[class*="jackpot"], [class*="prize"]'
+                    ).each((j, jp) => {
                         const t = $(jp).text().trim();
-                        if (t.includes('$')) jackpot = t.replace(/\s+/g, ' ');
+
+                        if (t.includes('$')) {
+                            jackpot = t.replace(/\s+/g, ' ');
+                        }
                     });
+
                     break;
                 }
+
                 parent = parent.parent();
             }
-            if (angka.length > 0) markets.push({ pasaran: nama, tanggal_undian: tanggal, jackpot, angka_keluar: angka });
+
+            if (angka.length > 0) {
+                markets.push({
+                    pasaran: nama,
+                    tanggal_undian: tanggal,
+                    jackpot,
+                    angka_keluar: angka
+                });
+            }
         });
 
-        res.json({ status: 'sukses', waktu_update_wib: dapatkanWaktuWIB(), total_pasaran: markets.length, data: markets });
+        return res.json({
+            status: 'sukses',
+            waktu_update_wib: dapatkanWaktuWIB(),
+            total_pasaran: markets.length,
+            data: markets
+        });
     } catch (error) {
-        res.status(500).json({ status: 'error', pesan: error.message });
+        return res.status(500).json({
+            status: 'error',
+            pesan: error.message
+        });
     }
 });
 
+// Vercel memakai export ini; tidak perlu app.listen().
 module.exports = app;
