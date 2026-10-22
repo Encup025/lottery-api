@@ -32,23 +32,19 @@ const STATE_SLUG = {
 
 // Alias endpoint API -> slug game asli LotteryUSA.
 const GAME_ALIAS = {
-    // Texas
     'texas/morning-daily-4': 'morning-pick-4',
     'texas/day-daily-4': 'midday-4',
     'texas/evening-daily-4': 'evening-pick-4',
     'texas/night-daily-4': 'daily-4',
 
-    // Oregon
     'oregon/1-pm-pick-4': 'pick-4-1pm',
     'oregon/4-pm-pick-4': 'pick-4-4pm',
     'oregon/7-pm-pick-4': 'pick-4-7pm',
     'oregon/10-pm-pick-4': 'pick-4-10pm',
 
-    // Florida
     'florida/pick-4-midday': 'midday-pick-4',
     'florida/pick-4-evening': 'pick-4',
 
-    // Kentucky
     'kentucky/pick-4-evening': 'pick-4'
 };
 
@@ -340,14 +336,23 @@ function slotWIB(tglUS, tz, slot) {
     return null;
 }
 
-// ================= FETCH ANTI BLOK =================
-const HEADERS = {
-    'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9'
-};
+// ================= FETCH =================
+
+// Rotasi User-Agent agar lebih aman dari blokir Cloudflare
+const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+function getRandomHeaders() {
+    return {
+        'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
+    };
+}
 
 const diblokCF = data => {
     if (typeof data !== 'string') return true;
@@ -362,7 +367,9 @@ const diblokCF = data => {
     );
 };
 
-async function ambil(url, headers) {
+async function ambil(url) {
+    const headers = getRandomHeaders();
+    
     const res = await axios.get(url, {
         headers,
         timeout: 8000,
@@ -371,45 +378,44 @@ async function ambil(url, headers) {
         validateStatus: status => status >= 200 && status < 400
     });
 
-    if (res.status !== 200 || diblokCF(res.data)) {
-        throw new Error(`HTTP ${res.status} atau halaman diblokir`);
+    if (res.status !== 200) {
+        throw new Error(`HTTP ${res.status}`);
+    }
+
+    if (diblokCF(res.data)) {
+        throw new Error('Halaman ditolak atau menampilkan challenge Cloudflare.');
+    }
+
+    if (typeof res.data !== 'string' || res.data.length < 100) {
+        throw new Error('Respons HTML kosong atau terlalu pendek.');
     }
 
     return res.data;
 }
 
+// Deduplicasi request untuk URL yang sama dalam satu instance.
+const inFlightFetch = new Map();
+
 async function fetchWithAntiBlock(targetUrl) {
-    const enc = encodeURIComponent(targetUrl);
+    const existing = inFlightFetch.get(targetUrl);
 
-    const urls = [
-        targetUrl,
-        `https://api.allorigins.win/raw?url=${enc}`,
-        `https://api.codetabs.com/v1/proxy?quest=${enc}`
-    ];
-
-    const hasil = await Promise.allSettled(
-        urls.map(url => ambil(url, url === targetUrl ? HEADERS : {}))
-    );
-
-    for (const item of hasil) {
-        if (
-            item.status === 'fulfilled' &&
-            typeof item.value === 'string' &&
-            item.value.length > 500 &&
-            !diblokCF(item.value)
-        ) {
-            return item.value;
-        }
+    if (existing) {
+        return existing;
     }
 
-    const alasan = hasil
-        .filter(item => item.status === 'rejected')
-        .map(item => item.reason?.message || 'Request gagal')
-        .join(' | ');
+    const request = (async () => {
+        return await ambil(targetUrl);
+    })();
 
-    throw new Error(
-        `Semua jalur akses gagal. ${alasan || 'HTML tidak valid'}`
-    );
+    inFlightFetch.set(targetUrl, request);
+
+    try {
+        return await request;
+    } finally {
+        if (inFlightFetch.get(targetUrl) === request) {
+            inFlightFetch.delete(targetUrl);
+        }
+    }
 }
 
 // ================= CACHE HASIL VALID =================
@@ -449,6 +455,7 @@ function setCache(key, value) {
     }
 
     okCache.delete(key);
+
     okCache.set(key, {
         t: Date.now(),
         v: value
@@ -542,6 +549,8 @@ function cariTanggalRaw($, mulai) {
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
+    // Tambahkan cache CDN Vercel untuk halaman depan agar meringankan server
+    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
     const waktuWIB = dapatkanWaktuWIB();
 
     const html = `
@@ -675,8 +684,8 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
     const { sesi } = req.params;
     const debug = req.query.debug === '1';
 
-    // Format input URL (misal: "1300" menjadi "13:00")
     let targetJam = '';
+
     if (/^\d{4}$/.test(sesi)) {
         targetJam = `${sesi.slice(0, 2)}:${sesi.slice(2, 4)}`;
     } else if (/^\d{2}:\d{2}$/.test(sesi)) {
@@ -688,15 +697,26 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
         });
     }
 
-    const targetUrl = 'https://www.totomacaupools.com/'; 
-    
-    // Cache per sesi di hari yang sama agar tidak bentrok dengan hari kemarin
+    const [jamAngka, menitAngka] = targetJam.split(':').map(Number);
+
+    if (jamAngka > 23 || menitAngka > 59) {
+        return res.status(404).json({
+            status: 'error',
+            pesan: 'Jam sesi tidak valid.'
+        });
+    }
+
+    const targetUrl = 'https://www.totomacaupools.com/';
+
     const wibHariIni = partsInTZ(new Date(), 'Asia/Jakarta');
-    const isoWib = iso(wibHariIni); // Menghasilkan format "YYYY-MM-DD"
+    const isoWib = iso(wibHariIni);
     const cacheKey = `macau_${targetJam}_${isoWib}`;
-    
+
     const hit = getCache(cacheKey);
+
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
 
@@ -705,69 +725,132 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
         const $ = cheerio.load(html);
 
         let payload = null;
+        let fallback = null;
 
         $('.resultWrapper .container').each((i, el) => {
-            const judul = $(el).find('.event span').text().toUpperCase();
-            if (!judul.includes('4D')) return; // Fokus mencari 4D
+            const judul = $(el)
+                .find('.event span')
+                .text()
+                .toUpperCase();
 
-            // 1. Ekstrak Jam Web
-            const waktuRaw = $(el).find('.calendar .time').text().trim();
+            if (!judul.includes('4D')) return;
+
+            const waktuRaw = $(el)
+                .find('.calendar .time')
+                .text()
+                .trim();
+
             const waktuMatch = waktuRaw.match(/(\d{2}:\d{2})/);
             const jamWeb = waktuMatch ? waktuMatch[1] : '';
 
-            // 2. Ekstrak Tanggal Web
-            const hari = $(el).find('.calendar .day').contents().first().text().trim();
-            const bulanStr = $(el).find('.calendar .month').contents().first().text().trim().toLowerCase();
-            const tahun = $(el).find('.calendar .year').contents().first().text().trim();
-            
+            const hari = $(el)
+                .find('.calendar .day')
+                .contents()
+                .first()
+                .text()
+                .trim();
+
+            const bulanStr = $(el)
+                .find('.calendar .month')
+                .contents()
+                .first()
+                .text()
+                .trim()
+                .toLowerCase()
+                .replace(/\.$/, '');
+
+            const tahun = $(el)
+                .find('.calendar .year')
+                .contents()
+                .first()
+                .text()
+                .trim();
+
+            const bulanAngka = MONTHS.indexOf(bulanStr) + 1;
+
             const tanggalUndian = `${hari} ${bulanStr.toUpperCase()} ${tahun}`;
 
-            // Konversi bulan string (oct) ke angka menggunakan array MONTHS bawaan kode
-            const bulanAngka = MONTHS.indexOf(bulanStr) + 1; 
-            
-            // Format tanggal web menjadi YYYY-MM-DD
-            const isoWeb = `${tahun}-${String(bulanAngka).padStart(2, '0')}-${String(hari).padStart(2, '0')}`;
+            const isoWeb = (
+                bulanAngka > 0 &&
+                /^\d{1,2}$/.test(hari) &&
+                /^\d{4}$/.test(tahun)
+            )
+                ? `${tahun}-${String(bulanAngka).padStart(2, '0')}-${String(Number(hari)).padStart(2, '0')}`
+                : '';
 
-            // 3. Ekstrak Angka Keluaran
-            let angkaKeluar = [];
+            if (!tanggalValid(isoWeb)) return;
+
+            const angkaKeluar = [];
+
             $(el).find('.results ul li').each((j, li) => {
-                const style = $(li).attr('style') || '';
-                if (style.includes('hidden') || style.includes('none')) return;
+                const style = ($(li).attr('style') || '').toLowerCase();
+
+                if (style.includes('display:none') || style.includes('visibility:hidden')) {
+                    return;
+                }
 
                 const imgSrc = $(li).find('img').attr('src') || '';
-                const matchAngka = imgSrc.match(/ball-(\d+)\.png/);
-                
+                const matchAngka = imgSrc.match(/ball-(\d+)\.png/i);
+
                 if (matchAngka) {
                     angkaKeluar.push(matchAngka[1]);
                 }
             });
 
-            // 4. VALIDASI GANDA: Cocokkan JAM dan TANGGAL
+            // Hanya hasil yang cocok dengan jam dan tanggal yang dipilih
+            // boleh menjadi hasil sukses.
             if (jamWeb === targetJam && isoWeb === isoWib) {
-                payload = {
-                    status: 'sukses',
-                    pasaran: `TOTO MACAU ${targetJam} WIB`,
-                    tanggal_wib: tanggalUndian, // Pakai key yang sama dengan US
-                    waktu_undian_wib: `${jamWeb} WIB`,
-                    angka_keluar: angkaKeluar.join('')
-                };
-            } else {
-                // Jika jam cocok tapi tanggal kemarin, atau jam belum cocok
-                payload = {
+                if (angkaKeluar.length === 4) {
+                    payload = {
+                        status: 'sukses',
+                        pasaran: `TOTO MACAU ${targetJam} WIB`,
+                        tanggal_wib: tanggalUndian,
+                        waktu_undian_wib: `${jamWeb} WIB`,
+                        angka_keluar: angkaKeluar.join('')
+                    };
+
+                    return false;
+                }
+
+                if (!fallback) {
+                    fallback = {
+                        status: 'belum_update',
+                        pesan: `Tanggal dan sesi cocok, tetapi jumlah angka yang ditemukan ${angkaKeluar.length}/4.`,
+                        ...(debug ? {
+                            req_jam: targetJam,
+                            req_tgl: isoWib,
+                            web_jam: jamWeb,
+                            web_tgl: isoWeb,
+                            angka_ditemukan: angkaKeluar
+                        } : {})
+                    };
+                }
+
+                return;
+            }
+
+            if (!fallback) {
+                fallback = {
                     status: 'belum_update',
-                    pesan: `Data putaran ${targetJam} untuk tanggal ${isoWib} belum tersedia. Web masih menampilkan hasil ${jamWeb} tanggal ${isoWeb}.`,
-                    ...(debug ? { 
-                        req_jam: targetJam, req_tgl: isoWib, 
-                        web_jam: jamWeb, web_tgl: isoWeb 
+                    pesan: `Data putaran ${targetJam} untuk tanggal ${isoWib} belum tersedia. Web menampilkan hasil ${jamWeb || 'tanpa jam'} tanggal ${isoWeb}.`,
+                    ...(debug ? {
+                        req_jam: targetJam,
+                        req_tgl: isoWib,
+                        web_jam: jamWeb,
+                        web_tgl: isoWeb
                     } : {})
                 };
             }
         });
 
         if (!payload) {
+            payload = fallback;
+        }
+
+        if (!payload) {
             return res.status(422).json({
                 status: 'error',
-                pesan: 'Gagal menemukan struktur 4D di halaman Toto Macau.',
+                pesan: 'Gagal menemukan struktur 4D yang memiliki tanggal valid di halaman Toto Macau.',
                 ...(debug ? { url: targetUrl } : {})
             });
         }
@@ -776,13 +859,18 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
             setCache(cacheKey, payload);
         }
 
+        // Integrasi Cache-Control untuk CDN Vercel
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
-
     } catch (error) {
-        return res.status(500).json({
+        return res.status(502).json({
             status: 'error',
-            pesan: `Gagal mengakses website Toto Macau.`,
-            detail: error.message
+            pesan: 'Gagal mengakses website Toto Macau.',
+            detail: error.message,
+            ...(debug ? {
+                url: targetUrl,
+                waktu: dapatkanWaktuWIB()
+            } : {})
         });
     }
 });
@@ -813,6 +901,8 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
 
@@ -984,9 +1074,11 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
         setCache(cacheKey, payload);
 
+        // Integrasi Cache-Control untuk CDN Vercel
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
-        return res.status(500).json({
+        return res.status(502).json({
             status: 'error',
             pesan: 'Gagal mengambil data dari target.',
             detail: error.message,
@@ -1000,6 +1092,16 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
 // ================= PASARAN UTAMA =================
 app.get('/api/markets', async (req, res) => {
+    const cacheKey = 'usa_markets';
+
+    const hit = getCache(cacheKey);
+
+    if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        return res.json(hit);
+    }
+
     try {
         const html = await fetchWithAntiBlock(
             'https://www.lotteryusa.com/'
@@ -1079,19 +1181,35 @@ app.get('/api/markets', async (req, res) => {
             }
         });
 
-        return res.json({
+        const payload = {
             status: 'sukses',
             waktu_update_wib: dapatkanWaktuWIB(),
             total_pasaran: markets.length,
             data: markets
-        });
+        };
+
+        setCache(cacheKey, payload);
+
+        // Integrasi Cache-Control untuk CDN Vercel
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        return res.json(payload);
     } catch (error) {
-        return res.status(500).json({
+        return res.status(502).json({
             status: 'error',
             pesan: error.message
         });
     }
 });
 
-// Vercel memakai export ini; tidak perlu app.listen().
+// ================= SETUP SERVER / EXPORT =================
+
+// Jika dijalankan di komputer lokal (bukan Vercel), jalankan app.listen
+if (process.env.NODE_ENV !== 'production') {
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+        console.log(`Server berjalan di http://localhost:${PORT}`);
+    });
+}
+
+// Vercel memakai export ini
 module.exports = app;
