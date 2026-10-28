@@ -418,6 +418,54 @@ async function fetchWithAntiBlock(targetUrl) {
     }
 }
 
+// ================= SUMBER RESMI FLORIDA =================
+// Sumber utama untuk Florida Pick 4 (lebih cepat dari LotteryUSA).
+// Jika gagal / belum ada hasil hari ini (WIB), otomatis fallback ke LotteryUSA.
+const FL_API = 'https://apim-website-prod-eastus.azure-api.net/drawgamesapp/getLatestDrawGames';
+
+const FL_TIPE = {
+    'florida/pick-4-midday': 'MIDDAY',
+    'florida/pick-4-evening': 'EVENING'
+};
+
+async function ambilFloridaResmi(kunci) {
+    const respons = await axios.get(FL_API, {
+        headers: {
+            ...getRandomHeaders(),
+            'Accept': 'application/json',
+            'x-partner': 'web',
+            'Origin': 'https://floridalottery.com',
+            'Referer': 'https://floridalottery.com/'
+        },
+        timeout: 8000
+    });
+
+    const list = Array.isArray(respons.data)
+        ? respons.data
+        : JSON.parse(respons.data);
+
+    const hasil = list
+        .filter(x => x.Id === 108 && x.DrawType === FL_TIPE[kunci])
+        .map(x => {
+            const m = String(x.DrawDate).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+
+            if (!m) return null;
+
+            const angka = ['wn1', 'wn2', 'wn3', 'wn4'].map(k =>
+                (x.DrawNumbers.find(n => n.NumberType === k) || {}).NumberPick
+            );
+
+            return {
+                tgl: { y: Number(m[3]), m: Number(m[1]), d: Number(m[2]) },
+                angka
+            };
+        })
+        .filter(x => x && x.angka.every(Number.isInteger))
+        .sort((a, b) => iso(b.tgl).localeCompare(iso(a.tgl)));
+
+    return hasil[0] || null;
+}
+
 // ================= CACHE HASIL VALID =================
 const okCache = new Map();
 const OK_TTL_MS = 5 * 60 * 1000;
@@ -904,6 +952,69 @@ app.get('/api/result/:state/:game', async (req, res) => {
         // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
+    }
+
+    // ===== SUMBER RESMI FLORIDA (prioritas, fallback ke LotteryUSA) =====
+    if (FL_TIPE[`${state}/${game}`]) {
+        try {
+            const kunciFl = `${state}/${game}`;
+            const hasilFl = await ambilFloridaResmi(kunciFl);
+
+            if (hasilFl) {
+                const slotFl = SLOT_WIB[kunciFl];
+                const jamFl = JADWAL[kunciFl];
+
+                let waktuFl = slotFl
+                    ? slotWIB(hasilFl.tgl, tz, slotFl)
+                    : null;
+
+                if (!waktuFl) {
+                    const [hhFl, mmFl] = (jamFl || JAM_DEFAULT)
+                        .split(':')
+                        .map(Number);
+
+                    waktuFl = localToDate(
+                        hasilFl.tgl.y,
+                        hasilFl.tgl.m,
+                        hasilFl.tgl.d,
+                        hhFl,
+                        mmFl,
+                        tz
+                    );
+                }
+
+                const wibUndianFl = iso(
+                    partsInTZ(waktuFl, 'Asia/Jakarta')
+                );
+
+                const wibHariIniFl = iso(
+                    partsInTZ(new Date(), 'Asia/Jakarta')
+                );
+
+                if (wibUndianFl === wibHariIniFl) {
+                    const payloadFl = {
+                        status: 'sukses',
+                        pasaran: game === 'pick-4-midday'
+                            ? 'MIDDAY PICK 4'
+                            : 'PICK 4',
+                        tanggal_wib: getTanggalWIB(waktuFl),
+                        waktu_undian_wib: jamWIB(waktuFl),
+                        tanggal_undian_us: iso(hasilFl.tgl),
+                        zona_undian: tz,
+                        sumber: 'floridalottery.com',
+                        angka_keluar: hasilFl.angka.join('')
+                    };
+
+                    setCache(cacheKey, payloadFl);
+
+                    // Cache CDN lebih pendek agar hasil resmi tidak telat tersaji
+                    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+                    return res.json(bentukRespons(payloadFl, debug));
+                }
+            }
+        } catch (errorFl) {
+            // Gagal: lanjut ke LotteryUSA di bawah
+        }
     }
 
     try {
