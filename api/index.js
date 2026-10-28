@@ -466,6 +466,52 @@ async function ambilFloridaResmi(kunci) {
     return hasil[0] || null;
 }
 
+// ================= SUMBER RESMI NEW YORK (INTERNAL API) =================
+const NY_INTERNAL_API = 'https://nylottery.ny.gov/nyl-api/games/all/draws';
+
+const NY_TIPE_INTERNAL = {
+    'new-york/midday-win-4': 1, // 1 = Midday
+    'new-york/win-4': 2         // 2 = Evening
+};
+
+async function ambilNewYorkResmi(kunci) {
+    const periodTarget = NY_TIPE_INTERNAL[kunci];
+    if (!periodTarget) return null;
+
+    try {
+        const respons = await axios.get(NY_INTERNAL_API, {
+            headers: getRandomHeaders(),
+            timeout: 8000
+        });
+
+        const dataRoot = respons.data.data ? respons.data.data : respons.data;
+
+        if (!dataRoot || !dataRoot.win4 || !Array.isArray(dataRoot.win4.draws)) {
+            return null;
+        }
+
+        const hasil = dataRoot.win4.draws
+            .filter(x => x.drawPeriod === periodTarget && x.results && x.results.length > 0)
+            .map(x => {
+                const tglObj = new Date(x.resultDate);
+                const { y, m, d } = partsInTZ(tglObj, 'America/New_York');
+                const angkaArray = x.results[0].primary;
+
+                return {
+                    tgl: { y, m, d },
+                    angka: angkaArray
+                };
+            })
+            .filter(x => x && x.angka.length === 4)
+            .sort((a, b) => iso(b.tgl).localeCompare(iso(a.tgl)));
+
+        return hasil[0] || null;
+    } catch (error) {
+        // Gagal, biarkan return null agar fallback ke LotteryUSA
+        return null;
+    }
+}
+
 // ================= CACHE HASIL VALID =================
 const okCache = new Map();
 const OK_TTL_MS = 5 * 60 * 1000;
@@ -952,6 +998,47 @@ app.get('/api/result/:state/:game', async (req, res) => {
         // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
+    }
+
+    const kunciLotre = `${state}/${game}`;
+
+    // ===== SUMBER RESMI NEW YORK (API INTERNAL - PRIORITAS UTAMA) =====
+    if (NY_TIPE_INTERNAL[kunciLotre]) {
+        try {
+            const hasilNY = await ambilNewYorkResmi(kunciLotre);
+            if (hasilNY) {
+                const slotNY = SLOT_WIB[kunciLotre];
+                const jamNY = JADWAL[kunciLotre];
+
+                let waktuNY = slotNY ? slotWIB(hasilNY.tgl, tz, slotNY) : null;
+                if (!waktuNY) {
+                    const [hhNY, mmNY] = (jamNY || JAM_DEFAULT).split(':').map(Number);
+                    waktuNY = localToDate(hasilNY.tgl.y, hasilNY.tgl.m, hasilNY.tgl.d, hhNY, mmNY, tz);
+                }
+
+                const wibUndianNY = iso(partsInTZ(waktuNY, 'Asia/Jakarta'));
+                const wibHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+
+                if (wibUndianNY === wibHariIni) {
+                    const payloadNY = {
+                        status: 'sukses',
+                        pasaran: game === 'midday-win-4' ? 'MIDDAY WIN 4' : 'WIN 4',
+                        tanggal_wib: getTanggalWIB(waktuNY),
+                        waktu_undian_wib: jamWIB(waktuNY),
+                        tanggal_undian_us: iso(hasilNY.tgl),
+                        zona_undian: tz,
+                        sumber: 'nylottery.ny.gov (API)',
+                        angka_keluar: hasilNY.angka.join('')
+                    };
+
+                    setCache(cacheKey, payloadNY);
+                    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+                    return res.json(bentukRespons(payloadNY, debug));
+                }
+            }
+        } catch (errorNY) {
+            // Gagal: lanjut ke LotteryUSA (fallback)
+        }
     }
 
     // ===== SUMBER RESMI FLORIDA (prioritas, fallback ke LotteryUSA) =====
