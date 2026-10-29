@@ -419,6 +419,8 @@ async function fetchWithAntiBlock(targetUrl) {
 }
 
 // ================= SUMBER RESMI FLORIDA =================
+// Sumber utama untuk Florida Pick 4 (lebih cepat dari LotteryUSA).
+// Jika gagal / belum ada hasil hari ini (WIB), otomatis fallback ke LotteryUSA.
 const FL_API = 'https://apim-website-prod-eastus.azure-api.net/drawgamesapp/getLatestDrawGames';
 
 const FL_TIPE = {
@@ -464,12 +466,12 @@ async function ambilFloridaResmi(kunci) {
     return hasil[0] || null;
 }
 
-// ================= SUMBER RESMI NEW YORK =================
+// ================= SUMBER RESMI NEW YORK (INTERNAL API) =================
 const NY_INTERNAL_API = 'https://nylottery.ny.gov/nyl-api/games/all/draws';
 
 const NY_TIPE_INTERNAL = {
-    'new-york/midday-win-4': 1, 
-    'new-york/win-4': 2         
+    'new-york/midday-win-4': 1, // 1 = Midday
+    'new-york/win-4': 2         // 2 = Evening
 };
 
 async function ambilNewYorkResmi(kunci) {
@@ -505,6 +507,7 @@ async function ambilNewYorkResmi(kunci) {
 
         return hasil[0] || null;
     } catch (error) {
+        // Gagal, biarkan return null agar fallback ke LotteryUSA
         return null;
     }
 }
@@ -539,11 +542,14 @@ function setCache(key, value) {
         okCache.size >= CACHE_MAX_ENTRIES
     ) {
         const oldestKey = okCache.keys().next().value;
+
         if (oldestKey === undefined) break;
+
         okCache.delete(oldestKey);
     }
 
     okCache.delete(key);
+
     okCache.set(key, {
         t: Date.now(),
         v: value
@@ -559,18 +565,38 @@ function bentukRespons(full, debug) {
         tanggal_wib,
         waktu_undian_wib,
         angka_keluar,
+        p1,
+        p2,
+        p3,
         prize2,
-        prize3
+        prize3,
+        pesan
     } = full;
 
-    const res = { status, pasaran, tanggal_wib };
-    
+    if (status === 'belum_update') {
+        return {
+            status: 'belum_update',
+            pesan: pesan || 'Belum update.'
+        };
+    }
+
+    const mainNum = angka_keluar || p1;
+
+    const res = {
+        status: status || 'sukses',
+        pasaran,
+        tanggal_wib,
+        angka_keluar: mainNum,
+        p1: mainNum
+    };
+
     if (waktu_undian_wib) res.waktu_undian_wib = waktu_undian_wib;
-    
-    res.angka_keluar = angka_keluar;
-    
-    if (prize2) res.prize2 = prize2;
-    if (prize3) res.prize3 = prize3;
+
+    const secondPrize = p2 || prize2;
+    const thirdPrize = p3 || prize3;
+
+    if (secondPrize) res.p2 = secondPrize;
+    if (thirdPrize) res.p3 = thirdPrize;
 
     return res;
 }
@@ -644,6 +670,7 @@ function cariTanggalRaw($, mulai) {
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
+    // Tambahkan cache CDN Vercel untuk halaman depan agar meringankan server
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
     const waktuWIB = dapatkanWaktuWIB();
 
@@ -678,7 +705,7 @@ app.get('/', (req, res) => {
             <h1>🚀 Server API Live Draw Pools</h1>
             <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
             <div class="market-card btn-utama" style="margin-bottom: 20px;">
-                <h2 style="color:white;">🌐 Pasaran Nasional USA</h2>
+                <h2 style="color:white;">🌐 Pasaran Nasional</h2>
                 <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
             </div>
             <div class="grid">
@@ -741,7 +768,7 @@ app.get('/', (req, res) => {
                     <a href="/api/result/virginia/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
-                    <h2>peach Georgia</h2>
+                    <h2>🍑 Georgia</h2>
                     <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
                     <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
                 </div>
@@ -829,14 +856,13 @@ app.get('/api/result/hongkong/:tipe', async (req, res) => {
 
         // Pengecekan XXXXXX
         if (!prize1Full || prize1Full.includes('X')) {
-            return res.status(422).json({
+            return res.status(200).json(bentukRespons({
                 status: 'belum_update',
-                pesan: `Data pasaran HONGKONG ${tipe.toUpperCase()} belum tersedia (masih diundi/XXXXXX).`,
-                ...(debug ? { rawDate, prize1: prize1Full } : {})
-            });
+                pesan: `Data pasaran HONGKONG ${tipe.toUpperCase()} belum tersedia (masih diundi/XXXXXX).`
+            }, debug));
         }
 
-        // Ambil 4 angka belakang saja (4D)
+        // POTONG 4 ANGKA BELAKANG (4D)
         const prize1 = prize1Full.slice(-4);
         const prize2 = prize2Full.slice(-4);
         const prize3 = prize3Full.slice(-4);
@@ -845,9 +871,10 @@ app.get('/api/result/hongkong/:tipe', async (req, res) => {
             status: 'sukses',
             pasaran: `HONGKONG ${tipe.toUpperCase()}`,
             tanggal_wib: rawDate,
-            angka_keluar: prize1, // 4D dari 1st prize
-            prize2: prize2,       // 4D dari 2nd prize
-            prize3: prize3        // 4D dari 3rd prize
+            angka_keluar: prize1,
+            p1: prize1,
+            p2: prize2,
+            p3: prize3
         };
 
         setCache(cacheKey, payload);
@@ -900,6 +927,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
@@ -981,6 +1009,8 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
                 }
             });
 
+            // Hanya hasil yang cocok dengan jam dan tanggal yang dipilih
+            // boleh menjadi hasil sukses.
             if (jamWeb === targetJam && isoWeb === isoWib) {
                 if (angkaKeluar.length === 4) {
                     payload = {
@@ -1041,6 +1071,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
             setCache(cacheKey, payload);
         }
 
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
@@ -1082,12 +1113,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
 
     const kunciLotre = `${state}/${game}`;
 
+    // ===== SUMBER RESMI NEW YORK (API INTERNAL - PRIORITAS UTAMA) =====
     if (NY_TIPE_INTERNAL[kunciLotre]) {
         try {
             const hasilNY = await ambilNewYorkResmi(kunciLotre);
@@ -1121,9 +1154,12 @@ app.get('/api/result/:state/:game', async (req, res) => {
                     return res.json(bentukRespons(payloadNY, debug));
                 }
             }
-        } catch (errorNY) {}
+        } catch (errorNY) {
+            // Gagal: lanjut ke LotteryUSA (fallback)
+        }
     }
 
+    // ===== SUMBER RESMI FLORIDA (prioritas, fallback ke LotteryUSA) =====
     if (FL_TIPE[`${state}/${game}`]) {
         try {
             const kunciFl = `${state}/${game}`;
@@ -1176,11 +1212,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
                     setCache(cacheKey, payloadFl);
 
+                    // Cache CDN lebih pendek agar hasil resmi tidak telat tersaji
                     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
                     return res.json(bentukRespons(payloadFl, debug));
                 }
             }
-        } catch (errorFl) {}
+        } catch (errorFl) {
+            // Gagal: lanjut ke LotteryUSA di bawah
+        }
     }
 
     try {
@@ -1351,6 +1390,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
         setCache(cacheKey, payload);
 
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
@@ -1373,6 +1413,7 @@ app.get('/api/markets', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(hit);
     }
@@ -1465,6 +1506,7 @@ app.get('/api/markets', async (req, res) => {
 
         setCache(cacheKey, payload);
 
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(payload);
     } catch (error) {
@@ -1477,6 +1519,7 @@ app.get('/api/markets', async (req, res) => {
 
 // ================= SETUP SERVER / EXPORT =================
 
+// Jika dijalankan di komputer lokal (bukan Vercel), jalankan app.listen
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
@@ -1484,4 +1527,5 @@ if (process.env.NODE_ENV !== 'production') {
     });
 }
 
+// Vercel memakai export ini
 module.exports = app;
