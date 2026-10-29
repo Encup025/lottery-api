@@ -1,4 +1,3 @@
-
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -559,15 +558,18 @@ function bentukRespons(full, debug) {
         status,
         pasaran,
         tanggal_wib,
-        angka_keluar
+        angka_keluar,
+        p1,
+        p2,
+        p3
     } = full;
 
-    return {
-        status,
-        pasaran,
-        tanggal_wib,
-        angka_keluar
-    };
+    // Masukkan langsung p1, p2, p3 ke root JSON jika ada (untuk HK Pools)
+    if (p1 !== undefined) {
+        return { status, pasaran, tanggal_wib, p1, p2, p3 };
+    }
+
+    return { status, pasaran, tanggal_wib, angka_keluar };
 }
 
 // ================= HELPER PARSER HASIL =================
@@ -837,11 +839,9 @@ function parseHkPools(html, market) {
         status: 'sukses',
         pasaran: HKPOOLS_LABEL[market],
         tanggal_wib: tanggalWib,
-        angka_keluar: {
-            p1,
-            p2,
-            p3
-        }
+        p1,
+        p2,
+        p3
     };
 }
 
@@ -1204,9 +1204,9 @@ app.get('/api/result/hk-pools/:market', async (req, res) => {
 
         const hasilLengkap = Boolean(
             payload.tanggal_wib &&
-            /^\d{4}$/.test(payload.angka_keluar.p1 || '') &&
-            /^\d{4}$/.test(payload.angka_keluar.p2 || '') &&
-            /^\d{4}$/.test(payload.angka_keluar.p3 || '')
+            /^\d{4}$/.test(payload.p1 || '') &&
+            /^\d{4}$/.test(payload.p2 || '') &&
+            /^\d{4}$/.test(payload.p3 || '')
         );
 
         if (!hasilLengkap) {
@@ -1214,7 +1214,9 @@ app.get('/api/result/hk-pools/:market', async (req, res) => {
                 status: 'belum_update',
                 pasaran: namaPasaran,
                 tanggal_wib: payload.tanggal_wib,
-                angka_keluar: payload.angka_keluar,
+                p1: payload.p1,
+                p2: payload.p2,
+                p3: payload.p3,
                 pesan: 'Hasil belum lengkap atau situs masih menampilkan placeholder.',
                 ...(debug ? {
                     url: HKPOOLS_URL,
