@@ -369,7 +369,7 @@ const diblokCF = data => {
 
 async function ambil(url) {
     const headers = getRandomHeaders();
-    
+
     const res = await axios.get(url, {
         headers,
         timeout: 8000,
@@ -419,6 +419,8 @@ async function fetchWithAntiBlock(targetUrl) {
 }
 
 // ================= SUMBER RESMI FLORIDA =================
+// Sumber utama untuk Florida Pick 4 (lebih cepat dari LotteryUSA).
+// Jika gagal / belum ada hasil hari ini (WIB), otomatis fallback ke LotteryUSA.
 const FL_API = 'https://apim-website-prod-eastus.azure-api.net/drawgamesapp/getLatestDrawGames';
 
 const FL_TIPE = {
@@ -468,8 +470,8 @@ async function ambilFloridaResmi(kunci) {
 const NY_INTERNAL_API = 'https://nylottery.ny.gov/nyl-api/games/all/draws';
 
 const NY_TIPE_INTERNAL = {
-    'new-york/midday-win-4': 1, 
-    'new-york/win-4': 2         
+    'new-york/midday-win-4': 1, // 1 = Midday
+    'new-york/win-4': 2         // 2 = Evening
 };
 
 async function ambilNewYorkResmi(kunci) {
@@ -505,6 +507,7 @@ async function ambilNewYorkResmi(kunci) {
 
         return hasil[0] || null;
     } catch (error) {
+        // Gagal, biarkan return null agar fallback ke LotteryUSA
         return null;
     }
 }
@@ -553,7 +556,6 @@ function setCache(key, value) {
     });
 }
 
-// FUNGSI ASLI MILIK ANDA TANPA DIUBAH
 function bentukRespons(full, debug) {
     if (debug) return full;
 
@@ -570,12 +572,6 @@ function bentukRespons(full, debug) {
         tanggal_wib,
         angka_keluar
     };
-}
-
-// FUNGSI KHUSUS HK POOLS AGAR TIDAK MENGGANGGU PASARAN LAIN
-function bentukResponsHK(full, debug) {
-    if (debug) return full;
-    return full;
 }
 
 // ================= HELPER PARSER HASIL =================
@@ -645,8 +641,205 @@ function cariTanggalRaw($, mulai) {
     return '';
 }
 
+// ================= HELPER HK POOLS =================
+const HKPOOLS_URL = 'https://hkpools.com/';
+
+const HKPOOLS_LABEL = {
+    day: 'HONGKONG DAY',
+    night: 'HONGKONG NIGHT'
+};
+
+const BULAN_INGGRIS = [
+    'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'
+];
+
+function formatTanggalHkPools(tanggal) {
+    const match = String(tanggal || '').match(
+        /^(\d{1,2})-(\d{1,2})-(\d{4})$/
+    );
+
+    if (!match) return null;
+
+    const hari = Number(match[1]);
+    const bulan = Number(match[2]);
+    const tahun = Number(match[3]);
+
+    const date = new Date(Date.UTC(tahun, bulan - 1, hari));
+
+    if (
+        date.getUTCFullYear() !== tahun ||
+        date.getUTCMonth() !== bulan - 1 ||
+        date.getUTCDate() !== hari
+    ) {
+        return null;
+    }
+
+    return `${String(hari).padStart(2, '0')} ${BULAN_INGGRIS[bulan - 1]} ${tahun}`;
+}
+
+function cariBagianHkPools($, market) {
+    const namaTarget = market === 'day'
+        ? 'HKPOOLS DAY'
+        : 'HKPOOLS NIGHT';
+
+    // Prioritaskan kolom pasaran pada halaman utama.
+    let bagian = $('.col-md-6').filter(function () {
+        const teks = $(this).text().replace(/\s+/g, ' ').trim().toUpperCase();
+
+        return (
+            teks.includes(namaTarget) &&
+            /1ST\s*PRIZE/i.test(teks) &&
+            /2ND\s*PRIZE/i.test(teks) &&
+            /3RD\s*PRIZE/i.test(teks)
+        );
+    }).first();
+
+    if (bagian.length) return bagian;
+
+    // Fallback jika struktur kolom situs berubah.
+    const judul = $('body *').filter(function () {
+        const teks = $(this).text().replace(/\s+/g, ' ').trim().toUpperCase();
+        return teks === namaTarget;
+    }).first();
+
+    if (!judul.length) return null;
+
+    let parent = judul.parent();
+
+    for (let i = 0; i < 8 && parent.length; i++) {
+        const teks = parent.text();
+
+        if (
+            /1ST\s*PRIZE/i.test(teks) &&
+            /2ND\s*PRIZE/i.test(teks) &&
+            /3RD\s*PRIZE/i.test(teks)
+        ) {
+            return parent;
+        }
+
+        parent = parent.parent();
+    }
+
+    return null;
+}
+
+function ambilTanggalHkPools($, bagian) {
+    let tanggal = null;
+
+    bagian.find('*').each((i, el) => {
+        if (tanggal) return false;
+
+        const teks = $(el).text().replace(/\s+/g, ' ').trim();
+
+        if (!/^DRAW\s*DATE\b/i.test(teks)) return;
+
+        const match = teks.match(
+            /DRAW\s*DATE\s*(\d{1,2}-\d{1,2}-\d{4})/i
+        );
+
+        if (match) {
+            tanggal = match[1];
+            return false;
+        }
+    });
+
+    if (!tanggal) {
+        const match = bagian.text().match(
+            /DRAW\s*DATE\s*(\d{1,2}-\d{1,2}-\d{4})/i
+        );
+
+        if (match) tanggal = match[1];
+    }
+
+    return tanggal;
+}
+
+function ambilHadiahHkPools($, bagian, label) {
+    let hasil = null;
+
+    bagian.find('tr').each((i, el) => {
+        if (hasil) return false;
+
+        const row = $(el);
+        const teksRow = row.text().replace(/\s+/g, ' ').trim().toUpperCase();
+
+        const selLabel = row.find('td').filter(function () {
+            return $(this).text().replace(/\s+/g, ' ').trim().toUpperCase() === label;
+        }).first();
+
+        if (!selLabel.length && !teksRow.includes(label)) {
+            return;
+        }
+
+        // Nomor diambil dari elemen bola pada baris hadiah tersebut.
+        const selAngka = selLabel.length
+            ? selLabel.closest('tr').find('span[class*="ball"]')
+            : row.find('span[class*="ball"]');
+
+        let angka = selAngka.map((j, bola) => {
+            return $(bola).text().trim();
+        }).get().join('');
+
+        angka = angka.replace(/\s+/g, '');
+
+        // Fallback untuk variasi HTML dengan nomor pada sel setelah label.
+        if (!/^\d{6}$/.test(angka)) {
+            const selBaris = selLabel.length
+                ? selLabel.closest('tr')
+                : row;
+
+            const selNomor = selBaris.find('td').last();
+
+            const digit = selNomor.text().replace(/\D/g, '');
+
+            if (/^\d{6}$/.test(digit)) {
+                angka = digit;
+            }
+        }
+
+        // Terima hanya enam digit; jangan menganggap placeholder X sebagai hasil.
+        if (/^\d{6}$/.test(angka)) {
+            hasil = angka.slice(-4);
+            return false;
+        }
+    });
+
+    return hasil;
+}
+
+function parseHkPools(html, market) {
+    const $ = cheerio.load(html);
+    const bagian = cariBagianHkPools($, market);
+
+    if (!bagian || !bagian.length) {
+        throw new Error(
+            `Bagian HKPOOLS ${market.toUpperCase()} tidak ditemukan pada halaman sumber.`
+        );
+    }
+
+    const tanggalRaw = ambilTanggalHkPools($, bagian);
+    const tanggalWib = formatTanggalHkPools(tanggalRaw);
+
+    const p1 = ambilHadiahHkPools($, bagian, '1ST PRIZE');
+    const p2 = ambilHadiahHkPools($, bagian, '2ND PRIZE');
+    const p3 = ambilHadiahHkPools($, bagian, '3RD PRIZE');
+
+    return {
+        status: 'sukses',
+        pasaran: HKPOOLS_LABEL[market],
+        tanggal_wib: tanggalWib,
+        angka_keluar: {
+            p1,
+            p2,
+            p3
+        }
+    };
+}
+
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
+    // Tambahkan cache CDN Vercel untuk halaman depan agar meringankan server
     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
     const waktuWIB = dapatkanWaktuWIB();
 
@@ -692,6 +885,13 @@ app.get('/', (req, res) => {
                     <a href="/api/result/macau/2300" target="_blank">Putaran 23:00</a>
                     <a href="/api/result/macau/0000" target="_blank">Putaran 00:00</a>
                 </div>
+
+                <div class="market-card macau-card">
+                    <h2>🇭🇰 HK Pools</h2>
+                    <a href="/api/result/hk-pools/day" target="_blank">Hongkong Day</a>
+                    <a href="/api/result/hk-pools/night" target="_blank">Hongkong Night</a>
+                </div>
+
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
@@ -776,87 +976,6 @@ app.get('/', (req, res) => {
     res.send(html);
 });
 
-// ================= ENDPOINT HONGKONG POOLS =================
-app.get('/api/result/hongkong/:tipe', async (req, res) => {
-    const { tipe } = req.params;
-    const debug = req.query.debug === '1';
-
-    if (tipe !== 'day' && tipe !== 'night') {
-        return res.status(404).json({
-            status: 'error',
-            pesan: 'Tipe pasaran Hongkong tidak valid. Gunakan "day" atau "night".'
-        });
-    }
-
-    const targetUrl = 'https://www.hkpools1.com/';
-    const isoWib = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
-    const cacheKey = `hkpools_${tipe}_${isoWib}`;
-
-    const hit = getCache(cacheKey);
-
-    if (hit) {
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-        return res.json(bentukResponsHK(hit, debug));
-    }
-
-    try {
-        const html = await fetchWithAntiBlock(targetUrl);
-        const $ = cheerio.load(html);
-
-        const sectionIndex = tipe === 'day' ? 0 : 1;
-        const container = $('.col-md-6').eq(sectionIndex);
-
-        const rawDate = container.find('span.title-1:contains("DRAW DATE")')
-            .text()
-            .replace('DRAW DATE', '')
-            .trim();
-
-        const getBalls = (ballClass) => {
-            return container.find(ballClass)
-                .map((i, el) => $(el).text().trim())
-                .get()
-                .join('');
-        };
-
-        const prize1Full = getBalls('.ball-1');
-        const prize2Full = getBalls('.ball-2');
-        const prize3Full = getBalls('.ball-3');
-
-        if (!prize1Full || prize1Full.includes('X')) {
-            return res.status(200).json(bentukResponsHK({
-                status: 'belum_update',
-                pesan: `Data pasaran HONGKONG ${tipe.toUpperCase()} belum tersedia (masih diundi/XXXXXX).`
-            }, debug));
-        }
-
-        const prize1 = prize1Full.slice(-4);
-        const prize2 = prize2Full.slice(-4);
-        const prize3 = prize3Full.slice(-4);
-
-        const payload = {
-            status: 'sukses',
-            pasaran: `HONGKONG ${tipe.toUpperCase()}`,
-            tanggal_wib: rawDate,
-            angka_keluar: prize1,
-            p1: prize1,
-            p2: prize2,
-            p3: prize3
-        };
-
-        setCache(cacheKey, payload);
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-        return res.json(bentukResponsHK(payload, debug));
-
-    } catch (error) {
-        return res.status(502).json({
-            status: 'error',
-            pesan: 'Gagal mengakses website HK Pools.',
-            detail: error.message,
-            ...(debug ? { url: targetUrl } : {})
-        });
-    }
-});
-
 // ================= ENDPOINT TOTO MACAU PER JAM =================
 app.get('/api/result/macau/:sesi', async (req, res) => {
     const { sesi } = req.params;
@@ -893,6 +1012,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
@@ -974,6 +1094,8 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
                 }
             });
 
+            // Hanya hasil yang cocok dengan jam dan tanggal yang dipilih
+            // boleh menjadi hasil sukses.
             if (jamWeb === targetJam && isoWeb === isoWib) {
                 if (angkaKeluar.length === 4) {
                     payload = {
@@ -1034,6 +1156,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
             setCache(cacheKey, payload);
         }
 
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
@@ -1044,6 +1167,72 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
             ...(debug ? {
                 url: targetUrl,
                 waktu: dapatkanWaktuWIB()
+            } : {})
+        });
+    }
+});
+
+// ================= ENDPOINT HK POOLS DAY & NIGHT =================
+// Diletakkan sebelum endpoint LotteryUSA dinamis agar tidak tertangkap
+// oleh route /api/result/:state/:game.
+app.get('/api/result/hk-pools/:market', async (req, res) => {
+    const market = String(req.params.market || '').toLowerCase();
+    const debug = req.query.debug === '1';
+
+    if (!['day', 'night'].includes(market)) {
+        return res.status(404).json({
+            status: 'error',
+            pesan: 'Market HK Pools tidak dikenal. Gunakan day atau night.'
+        });
+    }
+
+    const namaPasaran = HKPOOLS_LABEL[market];
+    const cacheKey = `hk-pools-${market}`;
+
+    const hit = getCache(cacheKey);
+
+    if (hit) {
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        return res.json(bentukRespons(hit, debug));
+    }
+
+    try {
+        const html = await fetchWithAntiBlock(HKPOOLS_URL);
+        const payload = parseHkPools(html, market);
+
+        if (
+            !payload.tanggal_wib ||
+            !payload.angka_keluar.p1 ||
+            !payload.angka_keluar.p2 ||
+            !payload.angka_keluar.p3
+        ) {
+            return res.status(503).json({
+                status: 'belum_update',
+                pasaran: namaPasaran,
+                tanggal_wib: payload.tanggal_wib,
+                angka_keluar: payload.angka_keluar,
+                pesan: 'Hasil belum lengkap atau situs masih menampilkan placeholder.',
+                ...(debug ? {
+                    url: HKPOOLS_URL,
+                    market
+                } : {})
+            });
+        }
+
+        setCache(cacheKey, payload);
+
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        return res.json(bentukRespons(payload, debug));
+    } catch (error) {
+        console.error(`[HK POOLS ${market.toUpperCase()}]`, error.message);
+
+        return res.status(502).json({
+            status: 'error',
+            pasaran: namaPasaran,
+            pesan: 'Gagal mengambil atau membaca hasil HK Pools.',
+            ...(debug ? {
+                detail: error.message,
+                url: HKPOOLS_URL
             } : {})
         });
     }
@@ -1075,12 +1264,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
 
     const kunciLotre = `${state}/${game}`;
 
+    // ===== SUMBER RESMI NEW YORK (API INTERNAL - PRIORITAS UTAMA) =====
     if (NY_TIPE_INTERNAL[kunciLotre]) {
         try {
             const hasilNY = await ambilNewYorkResmi(kunciLotre);
@@ -1114,9 +1305,12 @@ app.get('/api/result/:state/:game', async (req, res) => {
                     return res.json(bentukRespons(payloadNY, debug));
                 }
             }
-        } catch (errorNY) {}
+        } catch (errorNY) {
+            // Gagal: lanjut ke LotteryUSA (fallback)
+        }
     }
 
+    // ===== SUMBER RESMI FLORIDA (prioritas, fallback ke LotteryUSA) =====
     if (FL_TIPE[`${state}/${game}`]) {
         try {
             const kunciFl = `${state}/${game}`;
@@ -1169,11 +1363,14 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
                     setCache(cacheKey, payloadFl);
 
+                    // Cache CDN lebih pendek agar hasil resmi tidak telat tersaji
                     res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
                     return res.json(bentukRespons(payloadFl, debug));
                 }
             }
-        } catch (errorFl) {}
+        } catch (errorFl) {
+            // Gagal: lanjut ke LotteryUSA di bawah
+        }
     }
 
     try {
@@ -1344,6 +1541,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
 
         setCache(cacheKey, payload);
 
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
@@ -1366,6 +1564,7 @@ app.get('/api/markets', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(hit);
     }
@@ -1458,6 +1657,7 @@ app.get('/api/markets', async (req, res) => {
 
         setCache(cacheKey, payload);
 
+        // Integrasi Cache-Control untuk CDN Vercel
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.json(payload);
     } catch (error) {
@@ -1470,6 +1670,7 @@ app.get('/api/markets', async (req, res) => {
 
 // ================= SETUP SERVER / EXPORT =================
 
+// Jika dijalankan di komputer lokal (bukan Vercel), jalankan app.listen
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, () => {
@@ -1477,4 +1678,5 @@ if (process.env.NODE_ENV !== 'production') {
     });
 }
 
+// Vercel memakai export ini
 module.exports = app;
