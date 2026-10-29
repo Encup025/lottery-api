@@ -539,46 +539,43 @@ function setCache(key, value) {
         okCache.size >= CACHE_MAX_ENTRIES
     ) {
         const oldestKey = okCache.keys().next().value;
+
         if (oldestKey === undefined) break;
+
         okCache.delete(oldestKey);
     }
 
     okCache.delete(key);
+
     okCache.set(key, {
         t: Date.now(),
         v: value
     });
 }
 
-// ================= PERUBAHAN FUNGSI RESPONS =================
+// FUNGSI ASLI MILIK ANDA TANPA DIUBAH
 function bentukRespons(full, debug) {
     if (debug) return full;
 
-    // 1. Jika belum update, kembalikan hanya status & pesan
-    if (full.status === 'belum_update') {
-        return {
-            status: full.status,
-            pesan: full.pesan
-        };
-    }
+    const {
+        status,
+        pasaran,
+        tanggal_wib,
+        angka_keluar
+    } = full;
 
-    // 2. Kunci standar untuk USA dan Macau (TIDAK ADA P1)
-    const res = {
-        status: full.status,
-        pasaran: full.pasaran,
-        tanggal_wib: full.tanggal_wib,
-        angka_keluar: full.angka_keluar
+    return {
+        status,
+        pasaran,
+        tanggal_wib,
+        angka_keluar
     };
+}
 
-    // 3. Masukkan jam undian HANYA jika payload punya (Macau / US)
-    if (full.waktu_undian_wib) res.waktu_undian_wib = full.waktu_undian_wib;
-
-    // 4. Masukkan P1, P2, P3 HANYA JIKA PASARAN HK (USA & Macau tidak akan terekspos ini)
-    if (full.p1) res.p1 = full.p1;
-    if (full.p2) res.p2 = full.p2;
-    if (full.p3) res.p3 = full.p3;
-
-    return res;
+// FUNGSI KHUSUS HK POOLS AGAR TIDAK MENGGANGGU PASARAN LAIN
+function bentukResponsHK(full, debug) {
+    if (debug) return full;
+    return full;
 }
 
 // ================= HELPER PARSER HASIL =================
@@ -799,7 +796,7 @@ app.get('/api/result/hongkong/:tipe', async (req, res) => {
 
     if (hit) {
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-        return res.json(bentukRespons(hit, debug));
+        return res.json(bentukResponsHK(hit, debug));
     }
 
     try {
@@ -826,13 +823,12 @@ app.get('/api/result/hongkong/:tipe', async (req, res) => {
         const prize3Full = getBalls('.ball-3');
 
         if (!prize1Full || prize1Full.includes('X')) {
-            return res.status(200).json(bentukRespons({
+            return res.status(200).json(bentukResponsHK({
                 status: 'belum_update',
                 pesan: `Data pasaran HONGKONG ${tipe.toUpperCase()} belum tersedia (masih diundi/XXXXXX).`
             }, debug));
         }
 
-        // HANYA HK yang disisipkan properti p1, p2, p3
         const prize1 = prize1Full.slice(-4);
         const prize2 = prize2Full.slice(-4);
         const prize3 = prize3Full.slice(-4);
@@ -849,7 +845,7 @@ app.get('/api/result/hongkong/:tipe', async (req, res) => {
 
         setCache(cacheKey, payload);
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-        return res.json(bentukRespons(payload, debug));
+        return res.json(bentukResponsHK(payload, debug));
 
     } catch (error) {
         return res.status(502).json({
@@ -985,7 +981,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
                         pasaran: `TOTO MACAU ${targetJam} WIB`,
                         tanggal_wib: tanggalUndian,
                         waktu_undian_wib: `${jamWeb} WIB`,
-                        angka_keluar: angkaKeluar.join('') // USA/Macau tidak dikirim p1 di sini
+                        angka_keluar: angkaKeluar.join('')
                     };
 
                     return false;
@@ -1343,7 +1339,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
             waktu_undian_wib: waktuWib,
             tanggal_undian_us: iso(tglUndian),
             zona_undian: tz,
-            angka_keluar: angka.join('') // TIDAK ADA p1 
+            angka_keluar: angka.join('')
         };
 
         setCache(cacheKey, payload);
