@@ -556,6 +556,7 @@ function setCache(key, value) {
     });
 }
 
+// ================= PERUBAHAN FUNGSI RESPONS =================
 function bentukRespons(full, debug) {
     if (debug) return full;
 
@@ -680,7 +681,7 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Dashboard API Live Draw USA, Macau & HK</title>
+        <title>Dashboard API Live Draw USA & Macau</title>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
             .container { max-width: 1000px; margin: 0 auto; }
@@ -696,24 +697,17 @@ app.get('/', (req, res) => {
             .btn-utama a:hover { background: #ff5252; }
             .macau-card { border-left-color: #e91e63; }
             .macau-card h2 { color: #e91e63; }
-            .hk-card { border-left-color: #ffc107; }
-            .hk-card h2 { color: #ffc107; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Server API Live Draw Pools</h1>
+            <h1>🚀 Server API Live Draw USA & Macau</h1>
             <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
             <div class="market-card btn-utama" style="margin-bottom: 20px;">
                 <h2 style="color:white;">🌐 Pasaran Nasional</h2>
                 <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
             </div>
             <div class="grid">
-                <div class="market-card hk-card">
-                    <h2>🇭🇰 Hongkong Pools</h2>
-                    <a href="/api/result/hongkong/day" target="_blank">HK Day (Siang)</a>
-                    <a href="/api/result/hongkong/night" target="_blank">HK Night (Malam)</a>
-                </div>
                 <div class="market-card macau-card">
                     <h2>🇲🇴 Toto Macau (4D)</h2>
                     <a href="/api/result/macau/1300" target="_blank">Putaran 13:00</a>
@@ -807,7 +801,7 @@ app.get('/', (req, res) => {
     res.send(html);
 });
 
-// ================= ENDPOINT HONGKONG POOLS =================
+// ================= PERUBAHAN: ENDPOINT HONGKONG POOLS =================
 app.get('/api/result/hongkong/:tipe', async (req, res) => {
     const { tipe } = req.params;
     const debug = req.query.debug === '1';
