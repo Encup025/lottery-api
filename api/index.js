@@ -1165,6 +1165,10 @@ app.get('/', (req, res) => {
     </a>
 </div>
                 <div class="market-card">
+                    <h2>🇹🇼 Taiwan</h2>
+                    <a href="/api/result/taiwan" target="_blank">Taiwan</a>
+                </div>
+                <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
                     <a href="/api/result/texas/day-daily-4" target="_blank">Day Daily 4</a>
@@ -1855,6 +1859,118 @@ app.get('/api/result/bullseye', async (req, res) => {
         });
     }
 });
+
+// ================= TAIWAN =================
+const TAIWAN_API = 'https://livedrawhijau.org/taiwan/update_taiwan';
+const TAIWAN_FIELDS = ['prize1', 'grand', 'regular', 'second', 'third', 'fourth'];
+
+app.get('/api/result/taiwan', async (req, res) => {
+    const debug = req.query.debug === '1';
+    const field = TAIWAN_FIELDS.includes(req.query.field)
+        ? req.query.field
+        : 'prize1';
+
+    try {
+        const respons = await axios.get(TAIWAN_API, {
+            headers: {
+                ...getRandomHeaders(),
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': 'https://livedrawhijau.org/taiwan/'
+            },
+            params: { _: Date.now() },
+            timeout: 8000
+        });
+
+        const d = Array.isArray(respons.data) ? respons.data[0] : respons.data;
+
+        if (!d || typeof d !== 'object' || !d[field]) {
+            return res.status(422).json({
+                status: 'error',
+                pasaran: 'TAIWAN',
+                pesan: 'Format respons sumber Taiwan tidak dikenali.'
+            });
+        }
+
+        const m = String(d.tanggal || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+        if (!m || !tanggalValid(d.tanggal)) {
+            return res.status(422).json({
+                status: 'error',
+                pasaran: 'TAIWAN',
+                pesan: 'Tanggal pada sumber Taiwan tidak valid.'
+            });
+        }
+
+        // Undian Taiwan sekitar 20:35 WIB. Tolak sebelum 20:30 WIB.
+        const sekarangWIB = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Asia/Jakarta',
+            hour: '2-digit',
+            minute: '2-digit',
+            hourCycle: 'h23'
+        }).formatToParts(new Date());
+
+        const menitWIB =
+            Number(sekarangWIB.find(p => p.type === 'hour').value) * 60 +
+            Number(sekarangWIB.find(p => p.type === 'minute').value);
+
+        if (menitWIB < 20 * 60 + 30) {
+            return res.json({
+                status: 'belum_update',
+                pesan: 'Undian Taiwan belum dimulai (sekitar 20:35 WIB).'
+            });
+        }
+
+        const isoHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+
+        if (d.tanggal !== isoHariIni) {
+            return res.json({
+                status: 'belum_update',
+                pesan: `Hasil Taiwan belum update (sumber: ${d.tanggal}, hari ini WIB: ${isoHariIni}).`,
+                ...(debug ? { draw_id: d.id } : {})
+            });
+        }
+
+        const angka = String(d[field]).replace(/\D/g, '');
+
+        if (angka.length < 4) {
+            return res.status(422).json({
+                status: 'belum_update',
+                pasaran: 'TAIWAN',
+                pesan: 'Angka Taiwan belum lengkap.'
+            });
+        }
+
+        const tglObj = new Date(Date.UTC(
+            Number(m[1]), Number(m[2]) - 1, Number(m[3]), 5, 0, 0
+        ));
+
+        const payload = {
+            status: 'sukses',
+            pasaran: 'TAIWAN',
+            tanggal_wib: getTanggalWIB(tglObj),
+            angka_keluar: angka.slice(-4),
+            ...(debug ? { draw_id: d.id, field, angka_penuh: angka } : {})
+        };
+
+        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+        return res.json(bentukRespons(payload, debug));
+    } catch (error) {
+        return res.status(502).json({
+            status: 'error',
+            pasaran: 'TAIWAN',
+            pesan: 'Gagal mengambil hasil Taiwan.',
+            ...(debug ? {
+                detail: error.response
+                    ? `Sumber membalas HTTP ${error.response.status}`
+                    : error.message,
+                url: TAIWAN_API,
+                waktu: dapatkanWaktuWIB()
+            } : {})
+        });
+    }
+});
+
 // ================= PASARAN UTAMA =================
 app.get('/api/markets', async (req, res) => {
     const cacheKey = 'usa_markets';
