@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cors = require('cors');
-
+const { randomUUID } = require('crypto');
 const app = express();
 app.use(cors());
 
@@ -508,6 +508,7 @@ async function ambilNewYorkResmi(kunci) {
 }
 
 // ================= CACHE HASIL VALID =================
+
 const okCache = new Map();
 const OK_TTL_MS = 5 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 200;
@@ -844,6 +845,140 @@ function parseHkPools(html, market) {
         p3
     };
 }
+// ================= NEW ZEALAND BULLSEYE =================
+
+const BULLSEYE_API =
+    'https://pathway.mylotto.co.nz/api/results/v1/results/bullseye';
+
+const BULLSEYE_TZ = 'Pacific/Auckland';
+const BULLSEYE_CACHE_TTL = 60 * 1000;
+
+let bullseyeCache = null;
+let bullseyeCacheTime = 0;
+let bullseyeInFlight = null;
+
+function getBullseyeHeaders() {
+    return {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': USER_AGENTS[
+            Math.floor(Math.random() * USER_AGENTS.length)
+        ],
+        'Origin': 'https://mylotto.co.nz',
+        'Referer': 'https://mylotto.co.nz/',
+        'LNZ-CHANNEL': 'web',
+        'LNZ-APPLICATION-VERSION': '39.0.0',
+        'LNZ-REQUEST-ID': randomUUID()
+    };
+}
+
+async function ambilBullseye() {
+    if (
+        bullseyeCache &&
+        Date.now() - bullseyeCacheTime < BULLSEYE_CACHE_TTL
+    ) {
+        return bullseyeCache;
+    }
+
+    if (bullseyeInFlight) {
+        return bullseyeInFlight;
+    }
+
+    bullseyeInFlight = (async () => {
+        try {
+            const response = await axios.get(BULLSEYE_API, {
+                headers: getBullseyeHeaders(),
+                timeout: 10000,
+                params: {
+                    _: Date.now()
+                }
+            });
+
+            const raw = response.data;
+
+            if (!raw || typeof raw !== 'object') {
+                throw new Error('Respons Bullseye bukan JSON yang valid.');
+            }
+
+            const angkaEnamDigit = String(
+                raw.bullseyeWinningNumbers?.numbers ?? ''
+            );
+
+            if (!/^\d{6}$/.test(angkaEnamDigit)) {
+                throw new Error(
+                    'Angka Bullseye tidak ditemukan atau bukan enam digit.'
+                );
+            }
+
+            const drawDate = String(raw.drawDate || '');
+            const drawTime = String(raw.drawTime || '');
+
+            const tanggalMatch = drawDate.match(
+                /^(\d{4})-(\d{2})-(\d{2})/
+            );
+
+            const waktuMatch = drawTime.match(
+                /^(\d{1,2}):(\d{2})$/
+            );
+
+            if (!tanggalMatch || !waktuMatch) {
+                throw new Error(
+                    'Format tanggal atau waktu undian Bullseye tidak dikenali.'
+                );
+            }
+
+            const tahun = Number(tanggalMatch[1]);
+            const bulan = Number(tanggalMatch[2]);
+            const hari = Number(tanggalMatch[3]);
+            const jam = Number(waktuMatch[1]);
+            const menit = Number(waktuMatch[2]);
+
+            const tanggalNZ = new Date(
+                Date.UTC(tahun, bulan - 1, hari)
+            );
+
+            if (
+                tanggalNZ.getUTCFullYear() !== tahun ||
+                tanggalNZ.getUTCMonth() !== bulan - 1 ||
+                tanggalNZ.getUTCDate() !== hari ||
+                jam > 23 ||
+                menit > 59
+            ) {
+                throw new Error(
+                    'Tanggal atau waktu undian Bullseye tidak valid.'
+                );
+            }
+
+            const waktuUndian = localToDate(
+                tahun,
+                bulan,
+                hari,
+                jam,
+                menit,
+                BULLSEYE_TZ
+            );
+
+            const payload = {
+                status: 'sukses',
+                pasaran: 'NEW ZEALAND BULLSEYE',
+                tanggal_wib: getTanggalWIB(waktuUndian),
+                waktu_undian_wib: jamWIB(waktuUndian),
+                tanggal_undian_nz: drawDate,
+                zona_undian: BULLSEYE_TZ,
+                draw_number: raw.drawNumber ?? null,
+                angka_keluar: angkaEnamDigit.slice(-4)
+            };
+
+            bullseyeCache = payload;
+            bullseyeCacheTime = Date.now();
+
+            return payload;
+        } finally {
+            bullseyeInFlight = null;
+        }
+    })();
+
+    return bullseyeInFlight;
+}
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
@@ -899,7 +1034,12 @@ app.get('/', (req, res) => {
                     <a href="/api/result/hk-pools/day" target="_blank">Hongkong Day</a>
                     <a href="/api/result/hk-pools/night" target="_blank">Hongkong Night</a>
                 </div>
-
+                <div class="market-card">
+    <h2>🇳🇿 Bullseye</h2>
+    <a href="/api/result/bullseye" target="_blank">
+        Bullseye
+    </a>
+</div>
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
@@ -1555,7 +1695,42 @@ app.get('/api/result/:state/:game', async (req, res) => {
         });
     }
 });
+// ================= ENDPOINT NEW ZEALAND BULLSEYE =================
 
+app.get('/api/result/bullseye', async (req, res) => {
+    const debug = req.query.debug === '1';
+
+    try {
+        const payload = await ambilBullseye();
+
+        res.setHeader(
+            'Cache-Control',
+            's-maxage=60, stale-while-revalidate'
+        );
+
+        return res.json(
+            debug
+                ? payload
+                : {
+                    status: payload.status,
+                    pasaran: payload.pasaran,
+                    tanggal_wib: payload.tanggal_wib,
+                    angka_keluar: payload.angka_keluar
+                }
+        );
+    } catch (error) {
+        return res.status(502).json({
+            status: 'error',
+            pasaran: 'NEW ZEALAND BULLSEYE',
+            pesan: 'Gagal mengambil hasil New Zealand Bullseye.',
+            ...(debug ? {
+                detail: error.message,
+                url: BULLSEYE_API,
+                waktu: dapatkanWaktuWIB()
+            } : {})
+        });
+    }
+});
 // ================= PASARAN UTAMA =================
 app.get('/api/markets', async (req, res) => {
     const cacheKey = 'usa_markets';
