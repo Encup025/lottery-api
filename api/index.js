@@ -845,6 +845,7 @@ function parseHkPools(html, market) {
         p3
     };
 }
+
 // ================= NEW ZEALAND BULLSEYE =================
 
 const BULLSEYE_API =
@@ -871,6 +872,117 @@ function getBullseyeHeaders() {
     };
 }
 
+// ================= VALIDASI BULLSEYE =================
+
+function validasiBullseye(drawDate, drawTime, waktuUndian) {
+    if (!tanggalValid(drawDate)) {
+        throw new Error('Tanggal undian Bullseye tidak valid.');
+    }
+
+    if (!(waktuUndian instanceof Date) || isNaN(waktuUndian.getTime())) {
+        throw new Error('Waktu undian Bullseye tidak valid.');
+    }
+
+    const match = /^(\d{1,2}):(\d{2})$/.exec(drawTime);
+
+    if (!match) {
+        throw new Error('Format waktu undian Bullseye tidak dikenali.');
+    }
+
+    const jam = Number(match[1]);
+    const menit = Number(match[2]);
+    const totalMenit = jam * 60 + menit;
+
+    if (jam > 23 || menit > 59) {
+        throw new Error('Jam undian Bullseye tidak valid.');
+    }
+
+    // Jadwal Bullseye sekitar pukul 18:00 Auckland.
+    if (
+        totalMenit < 17 * 60 + 55 ||
+        totalMenit > 18 * 60 + 15
+    ) {
+        throw new Error(
+            'Waktu undian tidak sesuai jadwal Bullseye.'
+        );
+    }
+
+    // Waktu sekarang di Selandia Baru.
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: BULLSEYE_TZ,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23'
+    });
+
+    const parts = Object.fromEntries(
+        formatter.formatToParts(new Date()).map(p => [
+            p.type,
+            p.value
+        ])
+    );
+
+    const sekarangMenit =
+        Number(parts.hour) * 60 + Number(parts.minute);
+
+    const tanggalSekarang =
+        `${parts.year}-${parts.month}-${parts.day}`;
+
+    const hariIni = new Date(Date.UTC(
+        Number(parts.year),
+        Number(parts.month) - 1,
+        Number(parts.day)
+    ));
+
+    const kemarin = new Date(hariIni);
+    kemarin.setUTCDate(kemarin.getUTCDate() - 1);
+
+    const tanggalKemarin = [
+        kemarin.getUTCFullYear(),
+        String(kemarin.getUTCMonth() + 1).padStart(2, '0'),
+        String(kemarin.getUTCDate()).padStart(2, '0')
+    ].join('-');
+
+    // Validasi tanggal hasil berdasarkan jadwal undian.
+    if (sekarangMenit < 18 * 60) {
+        if (drawDate !== tanggalKemarin) {
+            throw new Error(
+                'Tanggal hasil Bullseye tidak sesuai jadwal.'
+            );
+        }
+    } else if (sekarangMenit > 18 * 60 + 15) {
+        if (drawDate !== tanggalSekarang) {
+            throw new Error(
+                'Hasil Bullseye masih menggunakan tanggal lama.'
+            );
+        }
+    } else {
+        // Masa transisi pengundian.
+        if (
+            drawDate !== tanggalSekarang &&
+            drawDate !== tanggalKemarin
+        ) {
+            throw new Error(
+                'Tanggal hasil Bullseye tidak valid.'
+            );
+        }
+    }
+
+    // Tolak waktu undian yang berada terlalu jauh di masa depan.
+    if (waktuUndian.getTime() > Date.now() + 5 * 60 * 1000) {
+        throw new Error(
+            'Waktu undian Bullseye berada di masa depan.'
+        );
+    }
+
+    return true;
+}
+
+// ================= AMBIL HASIL BULLSEYE =================
+
 async function ambilBullseye() {
     if (
         bullseyeCache &&
@@ -896,9 +1008,12 @@ async function ambilBullseye() {
             const raw = response.data;
 
             if (!raw || typeof raw !== 'object') {
-                throw new Error('Respons Bullseye bukan JSON yang valid.');
+                throw new Error(
+                    'Respons Bullseye bukan JSON yang valid.'
+                );
             }
 
+            // Hasil resmi terdiri dari enam digit.
             const angkaEnamDigit = String(
                 raw.bullseyeWinningNumbers?.numbers ?? ''
             );
@@ -932,22 +1047,22 @@ async function ambilBullseye() {
             const jam = Number(waktuMatch[1]);
             const menit = Number(waktuMatch[2]);
 
-            const tanggalNZ = new Date(
-                Date.UTC(tahun, bulan - 1, hari)
-            );
+            const tanggalISO =
+                `${tahun}-${String(bulan).padStart(2, '0')}-${String(hari).padStart(2, '0')}`;
 
-            if (
-                tanggalNZ.getUTCFullYear() !== tahun ||
-                tanggalNZ.getUTCMonth() !== bulan - 1 ||
-                tanggalNZ.getUTCDate() !== hari ||
-                jam > 23 ||
-                menit > 59
-            ) {
+            if (!tanggalValid(tanggalISO)) {
                 throw new Error(
-                    'Tanggal atau waktu undian Bullseye tidak valid.'
+                    'Tanggal kalender Bullseye tidak valid.'
                 );
             }
 
+            if (jam > 23 || menit > 59) {
+                throw new Error(
+                    'Jam undian Bullseye tidak valid.'
+                );
+            }
+
+            // Konversi waktu Auckland ke WIB.
             const waktuUndian = localToDate(
                 tahun,
                 bulan,
@@ -957,12 +1072,19 @@ async function ambilBullseye() {
                 BULLSEYE_TZ
             );
 
+            // VALIDASI WAJIB SEBELUM HASIL DITERIMA.
+            validasiBullseye(
+                tanggalISO,
+                drawTime,
+                waktuUndian
+            );
+
             const payload = {
                 status: 'sukses',
                 pasaran: 'NEW ZEALAND BULLSEYE',
                 tanggal_wib: getTanggalWIB(waktuUndian),
                 waktu_undian_wib: jamWIB(waktuUndian),
-                tanggal_undian_nz: drawDate,
+                tanggal_undian_nz: tanggalISO,
                 zona_undian: BULLSEYE_TZ,
                 draw_number: raw.drawNumber ?? null,
                 angka_keluar: angkaEnamDigit.slice(-4)
@@ -972,6 +1094,7 @@ async function ambilBullseye() {
             bullseyeCacheTime = Date.now();
 
             return payload;
+
         } finally {
             bullseyeInFlight = null;
         }
@@ -979,6 +1102,7 @@ async function ambilBullseye() {
 
     return bullseyeInFlight;
 }
+
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
