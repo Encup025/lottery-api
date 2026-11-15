@@ -2,9 +2,15 @@ const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cors = require('cors');
+const https = require('https');
 const { randomUUID } = require('crypto');
+
 const app = express();
 app.use(cors());
+
+const insecureHttpsAgent = new https.Agent({
+    rejectUnauthorized: false
+});
 
 // ================= ZONA WAKTU =================
 const STATE_TZ = {
@@ -76,6 +82,11 @@ function partsInTZ(date, tz) {
 
 const iso = ({ y, m, d }) =>
     `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+function getWIBCompactDate(waktu = new Date()) {
+    const { y, m, d } = partsInTZ(waktu, 'Asia/Jakarta');
+    return `${y}${String(m).padStart(2, '0')}${String(d).padStart(2, '0')}`;
+}
 
 function tanggalValid(value) {
     if (!value) return false;
@@ -176,6 +187,69 @@ function getTanggalWIB(waktu = new Date()) {
     return `${hari[hr]}, ${d} ${bulan[m - 1]} ${y}`;
 }
 
+function escapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Validasi tanggal WIB hari ini pada teks HTML / JSON.
+function isWIBTodayValid(content) {
+    const { y: year, m: month, d: day } = partsInTZ(new Date(), 'Asia/Jakarta');
+
+    const dayNoZero = String(day);
+    const dayTwo = String(day).padStart(2, '0');
+    const monthNoZero = String(month);
+    const monthTwo = String(month).padStart(2, '0');
+    const shortYear = String(year).slice(-2);
+
+    const monthNamesId = [
+        'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+        'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    const monthNamesEn = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    const id = monthNamesId[month - 1];
+    const en = monthNamesEn[month - 1];
+    const idShort = id.slice(0, 3);
+    const enShort = en.slice(0, 3);
+
+    const sep = '[-/.,\\s]+';
+    const b = '(?<!\\d)';
+    const eb = '(?!\\d)';
+
+    const patterns = [
+        `${b}0?${dayNoZero}${sep}0?${monthNoZero}${sep}${year}${eb}`,
+        `${b}${year}${sep}0?${monthNoZero}${sep}0?${dayNoZero}${eb}`,
+        `${b}0?${monthNoZero}${sep}0?${dayNoZero}${sep}${year}${eb}`,
+        `${b}0?${dayNoZero}${sep}0?${monthNoZero}${sep}${shortYear}${eb}`,
+        `${b}0?${monthNoZero}${sep}0?${dayNoZero}${sep}${shortYear}${eb}`,
+        `${b}${shortYear}${sep}0?${monthNoZero}${sep}0?${dayNoZero}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(id)}${sep}${year}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(idShort)}${sep}${year}${eb}`,
+        `${b}${escapeRegex(id)}${sep}0?${dayNoZero}${sep}${year}${eb}`,
+        `${b}${escapeRegex(idShort)}${sep}0?${dayNoZero}${sep}${year}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(en)}${sep}${year}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(enShort)}${sep}${year}${eb}`,
+        `${b}${escapeRegex(en)}${sep}0?${dayNoZero}${sep}${year}${eb}`,
+        `${b}${escapeRegex(enShort)}${sep}0?${dayNoZero}${sep}${year}${eb}`,
+        `${b}${dayTwo}${monthTwo}${year}${eb}`,
+        `${b}${year}${monthTwo}${dayTwo}${eb}`,
+        `${b}${dayTwo}${escapeRegex(enShort)}${year}${eb}`,
+        `${b}${dayTwo}${escapeRegex(idShort)}${year}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(id)}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(idShort)}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(en)}${eb}`,
+        `${b}0?${dayNoZero}${sep}${escapeRegex(enShort)}${eb}`,
+        `${b}${escapeRegex(en)}${sep}0?${dayNoZero}${eb}`,
+        `${b}${escapeRegex(enShort)}${sep}0?${dayNoZero}${eb}`
+    ];
+
+    const text = String(content || '');
+    return patterns.some(p => new RegExp(p, 'i').test(text));
+}
+
 // Parse ISO, "Oct 19, 2026", dan "October 19".
 function parseTanggal(str, tzNow) {
     if (!str) return null;
@@ -220,7 +294,7 @@ function parseTanggal(str, tzNow) {
     return null;
 }
 
-// ================= JADWAL UNDIAN =================
+// ================= JADWAL UNDIAN USA =================
 const JADWAL = {
     'texas/morning-daily-4': '10:00',
     'texas/day-daily-4': '12:27',
@@ -273,7 +347,6 @@ const JADWAL = {
 
 const JAM_DEFAULT = '13:00';
 
-// Slot pasaran WIB.
 const SLOT_WIB = {
     'kentucky/midday-pick-4': '00:11',
     'florida/pick-4-midday': '00:21',
@@ -345,16 +418,33 @@ const USER_AGENTS = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 ];
 
-function getRandomHeaders() {
-    return {
+function getRandomHeaders(targetUrl = '') {
+    const headers = {
         'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8',
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
     };
+
+    if (targetUrl.includes('livedrawhijau.org')) {
+        try {
+            const pathSeg = new URL(targetUrl).pathname.split('/')[1];
+            headers['X-Requested-With'] = 'XMLHttpRequest';
+            headers['Referer'] = `https://livedrawhijau.org/${pathSeg}/`;
+            headers['Accept'] = 'application/json, text/javascript, */*; q=0.01';
+        } catch (e) {
+            // abaikan
+        }
+    } else if (targetUrl) {
+        headers['Referer'] = targetUrl;
+    }
+
+    return headers;
 }
 
 const diblokCF = data => {
-    if (typeof data !== 'string') return true;
+    if (typeof data !== 'string') return false;
 
     const lower = data.toLowerCase();
 
@@ -366,14 +456,16 @@ const diblokCF = data => {
     );
 };
 
-async function ambil(url) {
-    const headers = getRandomHeaders();
+async function ambil(url, signal = null) {
+    const headers = getRandomHeaders(url);
 
     const res = await axios.get(url, {
         headers,
-        timeout: 8000,
+        timeout: 7500,
         responseType: 'text',
         maxRedirects: 5,
+        httpsAgent: insecureHttpsAgent,
+        signal,
         validateStatus: status => status >= 200 && status < 400
     });
 
@@ -385,8 +477,8 @@ async function ambil(url) {
         throw new Error('Halaman ditolak atau menampilkan challenge Cloudflare.');
     }
 
-    if (typeof res.data !== 'string' || res.data.length < 100) {
-        throw new Error('Respons HTML kosong atau terlalu pendek.');
+    if (!res.data || (typeof res.data === 'string' && res.data.trim().length < 5)) {
+        throw new Error('Respons kosong atau terlalu pendek.');
     }
 
     return res.data;
@@ -510,8 +602,8 @@ async function ambilNewYorkResmi(kunci) {
 // ================= CACHE HASIL VALID =================
 
 const okCache = new Map();
-const OK_TTL_MS = 5 * 60 * 1000;
-const CACHE_MAX_ENTRIES = 200;
+const OK_TTL_MS = 3 * 60 * 1000;
+const CACHE_MAX_ENTRIES = 250;
 
 function getCache(key) {
     const item = okCache.get(key);
@@ -538,9 +630,7 @@ function setCache(key, value) {
         okCache.size >= CACHE_MAX_ENTRIES
     ) {
         const oldestKey = okCache.keys().next().value;
-
         if (oldestKey === undefined) break;
-
         okCache.delete(oldestKey);
     }
 
@@ -562,18 +652,41 @@ function bentukRespons(full, debug) {
         angka_keluar,
         p1,
         p2,
-        p3
+        p3,
+        pesan
     } = full;
 
-    // Masukkan langsung p1, p2, p3 ke root JSON jika ada (untuk HK Pools)
-    if (p1 !== undefined) {
-        return { status, pasaran, tanggal_wib, p1, p2, p3 };
+    if (status === 'belum_update') {
+        return {
+            status,
+            ...(pasaran ? { pasaran } : {}),
+            pesan: pesan || 'Hasil hari ini belum update.'
+        };
     }
 
-    return { status, pasaran, tanggal_wib, angka_keluar };
+    if (p1 !== undefined && p1 !== null) {
+        return {
+            status,
+            pasaran,
+            tanggal: tanggal_wib,
+            tanggal_wib,
+            angka_keluar: angka_keluar || p1,
+            p1,
+            ...(p2 ? { p2 } : {}),
+            ...(p3 ? { p3 } : {})
+        };
+    }
+
+    return {
+        status,
+        pasaran,
+        tanggal: tanggal_wib,
+        tanggal_wib,
+        angka_keluar
+    };
 }
 
-// ================= HELPER PARSER HASIL =================
+// ================= HELPER PARSER LOTTERYUSA =================
 function isFireball($, element) {
     const cls = ($(element).attr('class') || '').toLowerCase();
 
@@ -641,7 +754,6 @@ function cariTanggalRaw($, mulai) {
 }
 
 // ================= HELPER HK POOLS =================
-// URL sumber disesuaikan dengan situs HTML yang diberikan.
 const HKPOOLS_URL = 'https://hkpools1.com/';
 
 const HKPOOLS_LABEL = {
@@ -685,8 +797,6 @@ function cariBagianHkPools($, market) {
         ? 'HKPOOLS DAY'
         : 'HKPOOLS NIGHT';
 
-    // Struktur HTML sumber: judul berada di dalam elemen <b>
-    // dan masing-masing pasaran berada pada .col-md-6.
     const kolom = $('.col-md-6').filter(function () {
         const teks = $(this)
             .text()
@@ -705,7 +815,6 @@ function cariBagianHkPools($, market) {
 
     if (kolom.length) return kolom;
 
-    // Fallback jika kelas kolom berubah.
     let judul = null;
 
     $('b').each((_, el) => {
@@ -754,8 +863,6 @@ function ambilTanggalHkPools($, bagian) {
 }
 
 function ambilNomorEnamDigitHkPools($, row) {
-    // Sumber menggunakan enam elemen span.ball-1, span.ball-2,
-    // atau span.ball-3 untuk setiap hadiah.
     const bola = row.find(
         'span.ball-1, span.ball-2, span.ball-3'
     );
@@ -779,11 +886,9 @@ function ambilNomorEnamDigitHkPools($, row) {
             return nomor;
         }
 
-        // Jangan mengambil angka dari teks X atau placeholder lainnya.
         return null;
     }
 
-    // Fallback untuk variasi markup yang menyimpan angka pada sel.
     const teks = row.find('td').last().text().replace(/\s+/g, ' ').trim();
     const digit = teks.replace(/\D/g, '');
 
@@ -798,7 +903,6 @@ function ambilHadiahHkPools($, bagian, label) {
 
         const row = $(el);
 
-        // Label hadiah berada pada td yang berisi b.
         const labelTeks = row.find('td').first()
             .text()
             .replace(/\s+/g, ' ')
@@ -840,6 +944,7 @@ function parseHkPools(html, market) {
         status: 'sukses',
         pasaran: HKPOOLS_LABEL[market],
         tanggal_wib: tanggalWib,
+        angka_keluar: p1,
         p1,
         p2,
         p3
@@ -872,8 +977,6 @@ function getBullseyeHeaders() {
     };
 }
 
-// ================= VALIDASI BULLSEYE =================
-
 function validasiBullseye(drawDate, drawTime, waktuUndian) {
     if (!tanggalValid(drawDate)) {
         throw new Error('Tanggal undian Bullseye tidak valid.');
@@ -897,7 +1000,6 @@ function validasiBullseye(drawDate, drawTime, waktuUndian) {
         throw new Error('Jam undian Bullseye tidak valid.');
     }
 
-    // Jadwal Bullseye sekitar pukul 18:00 Auckland.
     if (
         totalMenit < 17 * 60 + 55 ||
         totalMenit > 18 * 60 + 15
@@ -907,7 +1009,6 @@ function validasiBullseye(drawDate, drawTime, waktuUndian) {
         );
     }
 
-    // Waktu sekarang di Selandia Baru.
     const formatter = new Intl.DateTimeFormat('en-GB', {
         timeZone: BULLSEYE_TZ,
         year: 'numeric',
@@ -946,7 +1047,6 @@ function validasiBullseye(drawDate, drawTime, waktuUndian) {
         String(kemarin.getUTCDate()).padStart(2, '0')
     ].join('-');
 
-    // Validasi tanggal hasil berdasarkan jadwal undian.
     if (sekarangMenit < 18 * 60) {
         if (drawDate !== tanggalKemarin) {
             throw new Error(
@@ -960,7 +1060,6 @@ function validasiBullseye(drawDate, drawTime, waktuUndian) {
             );
         }
     } else {
-        // Masa transisi pengundian.
         if (
             drawDate !== tanggalSekarang &&
             drawDate !== tanggalKemarin
@@ -971,7 +1070,6 @@ function validasiBullseye(drawDate, drawTime, waktuUndian) {
         }
     }
 
-    // Tolak waktu undian yang berada terlalu jauh di masa depan.
     if (waktuUndian.getTime() > Date.now() + 5 * 60 * 1000) {
         throw new Error(
             'Waktu undian Bullseye berada di masa depan.'
@@ -980,8 +1078,6 @@ function validasiBullseye(drawDate, drawTime, waktuUndian) {
 
     return true;
 }
-
-// ================= AMBIL HASIL BULLSEYE =================
 
 async function ambilBullseye() {
     if (
@@ -999,7 +1095,7 @@ async function ambilBullseye() {
         try {
             const response = await axios.get(BULLSEYE_API, {
                 headers: getBullseyeHeaders(),
-                timeout: 10000,
+                timeout: 8000,
                 params: {
                     _: Date.now()
                 }
@@ -1013,7 +1109,6 @@ async function ambilBullseye() {
                 );
             }
 
-            // Hasil resmi terdiri dari enam digit.
             const angkaEnamDigit = String(
                 raw.bullseyeWinningNumbers?.numbers ?? ''
             );
@@ -1062,7 +1157,6 @@ async function ambilBullseye() {
                 );
             }
 
-            // Konversi waktu Auckland ke WIB.
             const waktuUndian = localToDate(
                 tahun,
                 bulan,
@@ -1072,7 +1166,6 @@ async function ambilBullseye() {
                 BULLSEYE_TZ
             );
 
-            // VALIDASI WAJIB SEBELUM HASIL DITERIMA.
             validasiBullseye(
                 tanggalISO,
                 drawTime,
@@ -1103,6 +1196,595 @@ async function ambilBullseye() {
     return bullseyeInFlight;
 }
 
+// =====================================================================
+// UNIVERSAL SCRAPER ENGINE UNTUK PASARAN ASIA & TOGEL (DARI FILE BOT)
+// =====================================================================
+
+// Mendukung selector standar CSS maupun jQuery-style ':eq(N)' di Cheerio
+function queryCheerio($, selector) {
+    if (!selector) return $();
+    const eqMatch = String(selector).match(/^(.*?):eq\((\d+)\)\s*(.*)$/);
+    if (eqMatch) {
+        const [, before, idx, after] = eqMatch;
+        const base = $(before.trim()).eq(Number(idx));
+        return after && after.trim() ? base.find(after.trim()) : base;
+    }
+    return $(selector);
+}
+
+function cleanFourDigits(val) {
+    if (val === null || val === undefined) return null;
+    const digits = String(val).replace(/\D/g, '');
+    return digits.length >= 4 ? digits.slice(-4) : null;
+}
+
+function extractImageBalls($, selector) {
+    let numStr = '';
+    queryCheerio($, selector)
+        .first()
+        .find('img')
+        .each((_, el) => {
+            const src = $(el).attr('src') || '';
+            const match = src.match(/_(\d)\.jpg/i);
+            if (match) {
+                numStr += match[1];
+            }
+        });
+    return numStr || null;
+}
+
+function parseSG4DHistoryJson(jsonData, requestedDate) {
+    const drawList = jsonData?.result?.draw4d;
+    if (!Array.isArray(drawList) || drawList.length === 0) {
+        throw new Error('SG4D History: data draw4d kosong.');
+    }
+
+    const draw = drawList.find(
+        item => String(item?.date || '') === String(requestedDate)
+    );
+
+    if (!draw) {
+        throw new Error(`SG4D belum update (Diminta: ${requestedDate})`);
+    }
+
+    const prizeRows = Array.isArray(draw.n) ? draw.n : [];
+    const findPrize = pos => {
+        const item = prizeRows.find(
+            row => String(row?.p || '').toUpperCase() === pos
+        );
+        return item?.i != null ? String(item.i) : null;
+    };
+
+    const p1 = cleanFourDigits(findPrize('T1'));
+    const p2 = cleanFourDigits(findPrize('T2'));
+    const p3 = cleanFourDigits(findPrize('T3'));
+
+    if (!p1 || !p2 || !p3) {
+        throw new Error('SG4D History: T1/T2/T3 belum lengkap.');
+    }
+
+    return {
+        p1,
+        p2,
+        p3,
+        drawDate: draw.date
+    };
+}
+
+// Konfigurasi seluruh sumber scraping per endpoint slug
+const ASIAN_MARKETS = {
+    'cambodia': {
+        pasaran: 'CAMBODIA',
+        sources: [
+            {
+                url: 'https://www.magnumcambodia.com',
+                isImageBall: true,
+                prizeSelectors: {
+                    p1: "table[bordercolor='#EEEEEE'] tr:first-child td:nth-child(1)",
+                    p2: "table[bordercolor='#EEEEEE'] tr:first-child td:nth-child(2)",
+                    p3: "table[bordercolor='#EEEEEE'] tr:first-child td:nth-child(3)"
+                }
+            }
+        ]
+    },
+    'sydney-pools': {
+        pasaran: 'SYDNEY POOLS',
+        sources: [
+            {
+                url: 'https://livedrawnorthcarolinaday.wiki/livedraw/sydney.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-child(2) td.warnaisi',
+                    p2: 'tr:nth-child(3) td.warnaisi',
+                    p3: 'tr:nth-child(4) td.warnaisi'
+                }
+            },
+            {
+                url: 'https://livedraw.online/sydney/',
+                prizeSelectors: {
+                    p1: '.table.text-center tr:nth-child(1) td:nth-child(2) span',
+                    p2: '.table.text-center tr:nth-child(2) td:nth-child(2) span',
+                    p3: '.table.text-center tr:nth-child(3) td:nth-child(2) span'
+                }
+            },
+            {
+                url: 'https://www.sydneypoolstoday.com/',
+                isImageBall: true,
+                prizeSelectors: {
+                    p1: 'table.sample:eq(0) tr:nth-child(1) td:nth-child(2)',
+                    p2: 'table.sample:eq(0) tr:nth-child(3) td:nth-child(2)',
+                    p3: 'table.sample:eq(0) tr:nth-child(5) td:nth-child(2)'
+                }
+            },
+            {
+                url: 'https://rankcrack.com/sdy.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-of-type(4) td.box-value a',
+                    p2: 'tr:nth-of-type(5) td.box-value span',
+                    p3: 'tr:nth-of-type(6) td.box-value span'
+                }
+            }
+        ]
+    },
+    'sydney-lotto': {
+        pasaran: 'SYDNEY LOTTO',
+        sources: [
+            {
+                url: 'https://sydneylotto.com/positionPlace',
+                joinAll: true
+            },
+            {
+                url: 'https://rankcrack.com/sdylotto.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-of-type(4) td.box-value a',
+                    p2: 'tr:nth-of-type(6) td.box-value span',
+                    p3: 'tr:nth-of-type(7) td.box-value span'
+                }
+            }
+        ]
+    },
+    'china': {
+        pasaran: 'CHINA',
+        sources: [
+            {
+                url: 'https://www.chinapools.asia/apps/home-left',
+                prizeSelectors: {
+                    p1: '#table_home_1 tr:nth-child(1) td.td2_home1',
+                    p2: '#table_home_1 tr:nth-child(2) td.td2_home1',
+                    p3: '#table_home_1 tr:nth-child(3) td.td2_home1'
+                }
+            },
+            {
+                url: 'https://livedrawchina.store/',
+                prizeSelectors: {
+                    p1: '.ld-prize:eq(0) .ld-balls',
+                    p2: '.ld-prize:eq(1) .ld-balls',
+                    p3: '.ld-prize:eq(2) .ld-balls'
+                }
+            }
+        ]
+    },
+    'japan': {
+        pasaran: 'JAPAN',
+        sources: [
+            {
+                url: 'https://www.japanpools.online/',
+                selector: '.win-number .circle',
+                joinAll: true
+            }
+        ]
+    },
+    'singapore-toto': {
+        pasaran: 'SINGAPORE TOTO',
+        sources: [
+            {
+                url: 'https://livedraw.online/singapore-toto/',
+                selector: 'h3 span.text-gold'
+            },
+            {
+                url: 'https://livedrawhijau.org/singaporetoto/update_sgptoto'
+            },
+            {
+                url: 'https://www.resultlivedrawsgp.com/live-draw-toto',
+                selector: '.bg-blue-700 .rounded-full span'
+            },
+            {
+                url: 'https://rankcrack.com/toto.php',
+                selector: '.entry-ld-body tr:nth-child(6) a'
+            }
+        ]
+    },
+    'singapore-4d': {
+        pasaran: 'SINGAPORE 4D',
+        sources: [
+            {
+                url: 'https://livedraw.online/singapore/',
+                prizeSelectors: {
+                    p1: '.result-winner',
+                    p2: 'tr:nth-child(2) .result-sub-winner',
+                    p3: 'tr:nth-child(3) .result-sub-winner'
+                }
+            },
+            {
+                url: 'https://livedrawhijau.org/singaporepools/update_sgp_pools'
+            },
+            {
+                url: 'https://www.singaporepools.com.sg/DataFileArchive/Lottery/Output/fourd_result_top_draws_en.html',
+                prizeSelectors: {
+                    p1: 'td.tdFirstPrize',
+                    p2: 'td.tdSecondPrize',
+                    p3: 'td.tdThirdPrize'
+                }
+            },
+            {
+                url: 'http://alpha4.live4d.sg/api/sg4d/history?ver=5.9.20&muid=1c98766488857238&did=10876903&ide=android&cdt=202611181850&rdt=20261010&ann=206&sec=1455c8',
+                type: 'sg4d-history'
+            },
+            {
+                url: 'https://rankcrack.com/sgp.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-of-type(4) td.box-value',
+                    p2: 'tr:nth-of-type(5) td.box-value',
+                    p3: 'tr:nth-of-type(6) td.box-value'
+                }
+            }
+        ]
+    },
+    'magnum-4d': {
+        pasaran: 'MAGNUM 4D',
+        sources: [
+            {
+                url: 'https://togel-online.cc/livedraw/magnum4d',
+                selector: 'p.text-gold'
+            },
+            {
+                url: 'https://magnum4d.my/en/results',
+                selector: '#fprize'
+            }
+        ]
+    },
+    'pcso': {
+        pasaran: 'PCSO',
+        sources: [
+            {
+                url: 'https://togel-online.cc/livedraw/pcso',
+                selector: 'p.text-gold'
+            },
+            {
+                url: 'https://rankcrack.com/pcso.php',
+                selector: 'td.box-value a'
+            }
+        ]
+    },
+    'taiwan': {
+        pasaran: 'TAIWAN',
+        sources: [
+            {
+                url: 'https://livedrawhijau.org/taiwan/update_taiwan'
+            },
+            {
+                url: 'https://www.pewaristotoprediksi.com/api/market-latest?market=taiwan'
+            },
+            {
+                url: 'https://159.89.203.33/live-draw/taiwan/proxy_taiwan.php'
+            },
+            {
+                url: 'https://rankcrack.com/tw.php',
+                selector: 'td.box-value'
+            },
+            {
+                url: 'https://masterpeace-sendai.com/',
+                prizeSelectors: {
+                    p1: '.ld-prize:eq(0) .ld-balls',
+                    p2: '.ld-prize:eq(1) .ld-balls',
+                    p3: '.ld-prize:eq(3) .ld-balls'
+                }
+            }
+        ]
+    },
+    'taipei': {
+        pasaran: 'TAIPEI',
+        sources: [
+            {
+                url: 'https://togel-online.cc/livedraw/taipei',
+                selector: 'p.text-gold'
+            }
+        ]
+    },
+    'hongkong': {
+        pasaran: 'HONGKONG',
+        sources: [
+            {
+                url: 'https://live.angka.live/livedrawhk/'
+            },
+            {
+                url: 'https://live-hongkong.blogspot.com/',
+                prizeSelectors: {
+                    p1: '#mydiv3',
+                    p2: '#mydiv4',
+                    p3: '#mydiv5'
+                }
+            },
+            {
+                url: 'https://livedraw.online/hongkong/',
+                prizeSelectors: {
+                    p1: '.table.text-center tr:nth-child(1) td:nth-child(2) span',
+                    p2: '.table.text-center tr:nth-child(2) td:nth-child(2) span',
+                    p3: '.table.text-center tr:nth-child(3) td:nth-child(2) span'
+                }
+            },
+            {
+                url: 'https://hongkonglivedraw.biz/live-draw-hk/hk.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-of-type(3) td.box-value',
+                    p2: 'tr:nth-of-type(4) td.box-value',
+                    p3: 'tr:nth-of-type(5) td.box-value'
+                }
+            },
+            {
+                url: 'https://rankcrack.com/hk.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-of-type(4) td.box-value',
+                    p2: 'tr:nth-of-type(5) td.box-value',
+                    p3: 'tr:nth-of-type(6) td.box-value'
+                }
+            }
+        ]
+    },
+    'hongkong-lotto': {
+        pasaran: 'HONGKONG LOTTO',
+        sources: [
+            {
+                url: 'https://hongkonglotto.com/positionPlace',
+                joinAll: true
+            },
+            {
+                url: 'https://livedraw.online/hongkong-lotto/',
+                prizeSelectors: {
+                    p1: '.table.text-center tr:nth-child(1) td:nth-child(2) span',
+                    p2: '.table.text-center tr:nth-child(2) td:nth-child(2) span',
+                    p3: '.table.text-center tr:nth-child(3) td:nth-child(2) span'
+                }
+            },
+            {
+                url: 'https://68.183.227.182/live-draw-togel/hk-live.php',
+                prizeSelectors: {
+                    p1: '.entry-ld-body tr:nth-of-type(1) td:nth-child(2)',
+                    p2: '.entry-ld-body tr:nth-of-type(2) td:nth-child(2)',
+                    p3: '.entry-ld-body tr:nth-of-type(3) td:nth-child(2)'
+                }
+            },
+            {
+                url: 'https://rankcrack.com/hklotto.php',
+                prizeSelectors: {
+                    p1: 'tr:nth-of-type(4) td.box-value a',
+                    p2: 'tr:nth-of-type(6) td.box-value span',
+                    p3: 'tr:nth-of-type(7) td.box-value span'
+                }
+            }
+        ]
+    }
+};
+
+async function scrapeSingleAsianSource(marketName, src, signal) {
+    let requestUrl = src.url;
+
+    if (src.type === 'sg4d-history') {
+        const sep = requestUrl.includes('?') ? '&' : '?';
+        requestUrl = `${requestUrl}${sep}d=${getWIBCompactDate()}`;
+    }
+
+    const cacheBuster = requestUrl.includes('?') ? '&' : '?';
+    const rawBody = await ambil(`${requestUrl}${cacheBuster}_=${Date.now()}`, signal);
+
+    let jsonData = null;
+
+    if (typeof rawBody === 'string') {
+        let trimmed = rawBody.trim();
+        if (trimmed.startsWith('<')) {
+            const $pre = cheerio.load(trimmed);
+            const preText = $pre('pre').text().trim();
+            if (preText.startsWith('{') || preText.startsWith('[')) {
+                trimmed = preText;
+            }
+        }
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            try {
+                jsonData = JSON.parse(trimmed);
+            } catch (e) {
+                jsonData = null;
+            }
+        }
+    } else if (typeof rawBody === 'object' && rawBody !== null) {
+        jsonData = rawBody;
+    }
+
+    let p1Raw = null;
+    let p2Raw = null;
+    let p3Raw = null;
+    let dateVerified = false;
+
+    if (jsonData) {
+        const jsonStr = JSON.stringify(jsonData);
+
+        if (src.type === 'sg4d-history') {
+            const parsed = parseSG4DHistoryJson(jsonData, getWIBCompactDate());
+            p1Raw = parsed.p1;
+            p2Raw = parsed.p2;
+            p3Raw = parsed.p3;
+            dateVerified = true;
+        } else if (Array.isArray(jsonData) && jsonData[0]?.prize1) {
+            // Format livedrawhijau.org (Taiwan, SGP Pools, SGP Toto)
+            const d = jsonData[0];
+            p1Raw = d.prize1;
+            if (d.prize2) p2Raw = d.prize2;
+            if (d.prize3) p3Raw = d.prize3;
+            dateVerified = isWIBTodayValid(d.tanggal || jsonStr);
+        } else if (jsonData.Special_Prize || Array.isArray(jsonData.Grand_Prize)) {
+            const main = jsonData.Special_Prize || jsonData.Grand_Prize;
+            p1Raw = Array.isArray(main) ? main.join('') : String(main);
+            if (jsonData.Grand_Prize && jsonData.Special_Prize) {
+                p2Raw = Array.isArray(jsonData.Grand_Prize)
+                    ? jsonData.Grand_Prize.join('')
+                    : String(jsonData.Grand_Prize);
+            } else if (jsonData.Second_Prize) {
+                p2Raw = Array.isArray(jsonData.Second_Prize)
+                    ? jsonData.Second_Prize.join('')
+                    : String(jsonData.Second_Prize);
+            }
+            if (jsonData.Third_Prize) {
+                p3Raw = Array.isArray(jsonData.Third_Prize)
+                    ? jsonData.Third_Prize.join('')
+                    : String(jsonData.Third_Prize);
+            }
+            dateVerified = isWIBTodayValid(
+                jsonData.draw_date || jsonData.date || jsonData.tanggal || jsonStr
+            );
+        } else if (jsonData.p1) {
+            p1Raw = jsonData.p1;
+            p2Raw = jsonData.p2 || null;
+            p3Raw = jsonData.p3 || null;
+            dateVerified = isWIBTodayValid(
+                jsonData.tanggal_wib || jsonData.tanggal || jsonData.date || jsonStr
+            );
+        } else if (jsonData.result) {
+            p1Raw = jsonData.result;
+            dateVerified = isWIBTodayValid(
+                jsonData.tanggal_wib || jsonData.tanggal || jsonData.date || jsonStr
+            );
+        } else if (jsonData.data && jsonData.data.first_place) {
+            p1Raw = String(jsonData.data.first_place).replace(/,/g, '');
+            p2Raw = jsonData.data.second_place
+                ? String(jsonData.data.second_place).replace(/,/g, '')
+                : null;
+            p3Raw = jsonData.data.third_place
+                ? String(jsonData.data.third_place).replace(/,/g, '')
+                : null;
+            dateVerified = isWIBTodayValid(jsonData.date || jsonStr);
+        } else if (jsonData.hk_1st) {
+            p1Raw = jsonData.hk_1st;
+            p2Raw = jsonData.hk_2nd || null;
+            p3Raw = jsonData.hk_3rd || null;
+            dateVerified = isWIBTodayValid(jsonData.hk_date || jsonStr);
+        } else if (
+            jsonData.success === true &&
+            Array.isArray(jsonData.data) &&
+            jsonData.data[0]?.today_results?.results
+        ) {
+            // Format Pewaristoto API
+            const resObj = jsonData.data[0].today_results.results;
+            const keys = Object.keys(resObj);
+            if (keys.length > 0) {
+                p1Raw = resObj[keys[0]];
+            }
+            dateVerified = isWIBTodayValid(
+                jsonData.data[0].today_results.date || jsonStr
+            );
+        } else if (jsonData.status === 'sukses' && jsonData.angka_keluar) {
+            p1Raw = jsonData.angka_keluar;
+            dateVerified = isWIBTodayValid(jsonData.tanggal_wib || jsonStr);
+        } else if (jsonData.status === 'belum_update') {
+            throw new Error(jsonData.pesan || 'Belum update.');
+        } else {
+            throw new Error('Format JSON sumber tidak dikenali.');
+        }
+    } else {
+        // HTML Parser
+        const $ = cheerio.load(rawBody);
+        dateVerified = isWIBTodayValid(rawBody);
+
+        if (src.prizeSelectors) {
+            if (src.isImageBall) {
+                p1Raw = src.prizeSelectors.p1 ? extractImageBalls($, src.prizeSelectors.p1) : null;
+                p2Raw = src.prizeSelectors.p2 ? extractImageBalls($, src.prizeSelectors.p2) : null;
+                p3Raw = src.prizeSelectors.p3 ? extractImageBalls($, src.prizeSelectors.p3) : null;
+            } else {
+                p1Raw = src.prizeSelectors.p1
+                    ? queryCheerio($, src.prizeSelectors.p1).first().text().trim()
+                    : null;
+                p2Raw = src.prizeSelectors.p2
+                    ? queryCheerio($, src.prizeSelectors.p2).first().text().trim()
+                    : null;
+                p3Raw = src.prizeSelectors.p3
+                    ? queryCheerio($, src.prizeSelectors.p3).first().text().trim()
+                    : null;
+            }
+        } else if (src.selector) {
+            if (src.joinAll) {
+                p1Raw = queryCheerio($, src.selector)
+                    .map((_, el) => $(el).text().trim())
+                    .get()
+                    .join('');
+            } else if (src.isImageBall) {
+                p1Raw = extractImageBalls($, src.selector);
+            } else {
+                p1Raw = queryCheerio($, src.selector).first().text().trim();
+            }
+        } else {
+            p1Raw = $('.resultTable2').text().trim() || $('.outerbox').text().trim();
+        }
+    }
+
+    if (!dateVerified) {
+        throw new Error('Tanggal belum update untuk hari ini (WIB).');
+    }
+
+    const p1 = cleanFourDigits(p1Raw);
+    const p2 = cleanFourDigits(p2Raw);
+    const p3 = cleanFourDigits(p3Raw);
+
+    if (!p1) {
+        throw new Error('Angka P1 tidak valid atau belum lengkap.');
+    }
+
+    if (src.prizeSelectors?.p2 && !p2) {
+        throw new Error('Angka P2 tidak valid atau belum lengkap.');
+    }
+
+    if (src.prizeSelectors?.p3 && !p3) {
+        throw new Error('Angka P3 tidak valid atau belum lengkap.');
+    }
+
+    const tglWib = getTanggalWIB(new Date());
+
+    return {
+        status: 'sukses',
+        pasaran: marketName,
+        tanggal: tglWib,
+        tanggal_wib: tglWib,
+        angka_keluar: p1,
+        ...(p1 ? { p1 } : {}),
+        ...(p2 ? { p2 } : {}),
+        ...(p3 ? { p3 } : {}),
+        sumber: src.url
+    };
+}
+
+async function scrapeAsianMarketFastest(slug) {
+    const config = ASIAN_MARKETS[slug];
+    if (!config) return null;
+
+    const controller = new AbortController();
+
+    const tasks = config.sources.map(src =>
+        scrapeSingleAsianSource(config.pasaran, src, controller.signal)
+    );
+
+    try {
+        const winner = await Promise.any(tasks);
+        controller.abort();
+        return winner;
+    } catch (aggErr) {
+        const reasons = aggErr?.errors
+            ? [...new Set(aggErr.errors.map(e => e.message))].join(' | ')
+            : 'Semua sumber belum update.';
+
+        return {
+            status: 'belum_update',
+            pasaran: config.pasaran,
+            pesan: reasons
+        };
+    }
+}
 
 // ================= DASHBOARD =================
 app.get('/', (req, res) => {
@@ -1116,58 +1798,73 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Dashboard API Live Draw USA & Macau</title>
+        <title>Dashboard API Live Draw All Markets (48 Pasaran)</title>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; margin: 0; padding: 20px; }
-            .container { max-width: 1000px; margin: 0 auto; }
+            .container { max-width: 1100px; margin: 0 auto; }
             h1 { color: #00e676; text-align: center; margin-bottom: 5px; }
             .waktu { text-align: center; color: #aaaaaa; margin-bottom: 30px; font-size: 1.1em; background: #1e1e1e; padding: 10px; border-radius: 8px; border: 1px solid #333;}
             .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
             .market-card { background: #1e1e1e; padding: 15px; border-radius: 8px; border-left: 5px solid #03a9f4; }
             .market-card h2 { margin-top: 0; color: #03a9f4; font-size: 1.2em; border-bottom: 1px solid #333; padding-bottom: 10px; }
-            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 12px; margin-bottom: 10px; border-radius: 5px; text-align: center; transition: 0.3s;}
+            a { display: block; color: #ff9800; text-decoration: none; font-weight: bold; background: #2c2c2c; padding: 10px; margin-bottom: 8px; border-radius: 5px; text-align: center; transition: 0.3s;}
             a:hover { background: #ff9800; color: #121212; }
             .btn-utama { background: #d32f2f; border-left: 5px solid #d32f2f; }
             .btn-utama a { color: white; background: #b71c1c; }
             .btn-utama a:hover { background: #ff5252; }
             .macau-card { border-left-color: #e91e63; }
             .macau-card h2 { color: #e91e63; }
+            .asia-card { border-left-color: #00e676; }
+            .asia-card h2 { color: #00e676; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Server API Live Draw USA & Macau</h1>
+            <h1>🚀 Server API Live Draw (48 Pasaran)</h1>
             <div class="waktu">Waktu Server: <strong>${waktuWIB}</strong></div>
             <div class="market-card btn-utama" style="margin-bottom: 20px;">
-                <h2 style="color:white;">🌐 Pasaran Nasional</h2>
+                <h2 style="color:white;">🌐 Pasaran Nasional USA</h2>
                 <a href="/api/markets" target="_blank">Lihat Semua Pasaran Utama (Powerball, dll)</a>
             </div>
             <div class="grid">
                 <div class="market-card macau-card">
                     <h2>🇲🇴 Toto Macau (4D)</h2>
+                    <a href="/api/result/macau/0000" target="_blank">Putaran 00:01</a>
                     <a href="/api/result/macau/1300" target="_blank">Putaran 13:00</a>
                     <a href="/api/result/macau/1600" target="_blank">Putaran 16:00</a>
                     <a href="/api/result/macau/1900" target="_blank">Putaran 19:00</a>
                     <a href="/api/result/macau/2200" target="_blank">Putaran 22:00</a>
                     <a href="/api/result/macau/2300" target="_blank">Putaran 23:00</a>
-                    <a href="/api/result/macau/0000" target="_blank">Putaran 00:00</a>
+                </div>
+
+                <div class="market-card asia-card">
+                    <h2>🌏 Asia & Australia (1)</h2>
+                    <a href="/api/result/cambodia" target="_blank">Cambodia (CB)</a>
+                    <a href="/api/result/bullseye" target="_blank">Bullseye (BSE)</a>
+                    <a href="/api/result/sydney-pools" target="_blank">Sydney Pools (SDYP)</a>
+                    <a href="/api/result/sydney-lotto" target="_blank">Sydney Lotto (SDYL)</a>
+                    <a href="/api/result/china" target="_blank">China (CH)</a>
+                    <a href="/api/result/japan" target="_blank">Japan (JPN)</a>
+                </div>
+
+                <div class="market-card asia-card">
+                    <h2>🌏 Asia (2)</h2>
+                    <a href="/api/result/singapore-toto" target="_blank">Singapore Toto (SGPT)</a>
+                    <a href="/api/result/singapore-4d" target="_blank">Singapore 4D (SGP4D)</a>
+                    <a href="/api/result/magnum-4d" target="_blank">Magnum 4D (MG4D)</a>
+                    <a href="/api/result/pcso" target="_blank">PCSO (PSCO)</a>
+                    <a href="/api/result/taiwan" target="_blank">Taiwan (TW)</a>
+                    <a href="/api/result/taipei" target="_blank">Taipei (TAI)</a>
                 </div>
 
                 <div class="market-card macau-card">
-                    <h2>🇭🇰 HK Pools</h2>
-                    <a href="/api/result/hk-pools/day" target="_blank">Hongkong Day</a>
-                    <a href="/api/result/hk-pools/night" target="_blank">Hongkong Night</a>
+                    <h2>🇭🇰 Hongkong</h2>
+                    <a href="/api/result/hk-pools/day" target="_blank">Hongkong Day (HKD)</a>
+                    <a href="/api/result/hk-pools/night" target="_blank">Hongkong Night (HKN)</a>
+                    <a href="/api/result/hongkong" target="_blank">Hongkong (HK)</a>
+                    <a href="/api/result/hongkong-lotto" target="_blank">Hongkong Lotto (HKL)</a>
                 </div>
-                <div class="market-card">
-    <h2>🇳🇿 Bullseye</h2>
-    <a href="/api/result/bullseye" target="_blank">
-        Bullseye
-    </a>
-</div>
-                <div class="market-card">
-                    <h2>🇹🇼 Taiwan</h2>
-                    <a href="/api/result/taiwan" target="_blank">Taiwan</a>
-                </div>
+
                 <div class="market-card">
                     <h2>⭐ Texas</h2>
                     <a href="/api/result/texas/morning-daily-4" target="_blank">Morning Daily 4</a>
@@ -1213,14 +1910,11 @@ app.get('/', (req, res) => {
                     <a href="/api/result/virginia/pick-4" target="_blank">Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
-                    <h2>🍑 Georgia</h2>
-                    <a href="/api/result/georgia/midday-4" target="_blank">Midday 4</a>
-                    <a href="/api/result/georgia/cash-4-evening" target="_blank">Cash 4 Evening</a>
-                </div>
-                <div class="market-card">
-                    <h2>🐻 Missouri</h2>
-                    <a href="/api/result/missouri/midday-pick-4" target="_blank">Midday Pick 4</a>
-                    <a href="/api/result/missouri/pick-4" target="_blank">Pick 4 Evening</a>
+                    <h2>🍑 Georgia & Missouri</h2>
+                    <a href="/api/result/georgia/midday-4" target="_blank">GA Midday 4</a>
+                    <a href="/api/result/georgia/cash-4-evening" target="_blank">GA Cash 4 Evening</a>
+                    <a href="/api/result/missouri/midday-pick-4" target="_blank">MO Midday Pick 4</a>
+                    <a href="/api/result/missouri/pick-4" target="_blank">MO Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
                     <h2>🏎️ Indiana & NJ</h2>
@@ -1230,18 +1924,12 @@ app.get('/', (req, res) => {
                     <a href="/api/result/new-jersey/pick-4" target="_blank">NJ Pick 4 Evening</a>
                 </div>
                 <div class="market-card">
-                    <h2>🏖️ California</h2>
-                    <a href="/api/result/california/daily-4" target="_blank">Daily 4</a>
-                </div>
-                <div class="market-card">
-                    <h2>🌵 Arizona</h2>
-                    <a href="/api/result/arizona/pick-4-midday" target="_blank">Midday Pick 4</a>
-                    <a href="/api/result/arizona/pick-4" target="_blank">Pick 4 Evening</a>
-                </div>
-                <div class="market-card">
-                    <h2>🌽 Iowa</h2>
-                    <a href="/api/result/iowa/midday-4" target="_blank">Midday 4</a>
-                    <a href="/api/result/iowa/pick-4" target="_blank">Pick 4 Evening</a>
+                    <h2>🏖️ CA, AZ & IA</h2>
+                    <a href="/api/result/california/daily-4" target="_blank">CA Daily 4</a>
+                    <a href="/api/result/arizona/pick-4-midday" target="_blank">AZ Midday Pick 4</a>
+                    <a href="/api/result/arizona/pick-4" target="_blank">AZ Pick 4 Evening</a>
+                    <a href="/api/result/iowa/midday-4" target="_blank">IA Midday 4</a>
+                    <a href="/api/result/iowa/pick-4" target="_blank">IA Pick 4 Evening</a>
                 </div>
             </div>
         </div>
@@ -1288,7 +1976,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
     const hit = getCache(cacheKey);
 
     if (hit) {
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
 
@@ -1339,7 +2027,6 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
                 .trim();
 
             const bulanAngka = MONTHS.indexOf(bulanStr) + 1;
-
             const tanggalUndian = `${hari} ${bulanStr.toUpperCase()} ${tahun}`;
 
             const isoWeb = (
@@ -1374,6 +2061,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
                     payload = {
                         status: 'sukses',
                         pasaran: `TOTO MACAU ${targetJam} WIB`,
+                        tanggal: tanggalUndian,
                         tanggal_wib: tanggalUndian,
                         waktu_undian_wib: `${jamWeb} WIB`,
                         angka_keluar: angkaKeluar.join('')
@@ -1385,14 +2073,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
                 if (!fallback) {
                     fallback = {
                         status: 'belum_update',
-                        pesan: `Tanggal dan sesi cocok, tetapi jumlah angka yang ditemukan ${angkaKeluar.length}/4.`,
-                        ...(debug ? {
-                            req_jam: targetJam,
-                            req_tgl: isoWib,
-                            web_jam: jamWeb,
-                            web_tgl: isoWeb,
-                            angka_ditemukan: angkaKeluar
-                        } : {})
+                        pesan: `Tanggal dan sesi cocok, tetapi jumlah angka yang ditemukan ${angkaKeluar.length}/4.`
                     };
                 }
 
@@ -1402,13 +2083,7 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
             if (!fallback) {
                 fallback = {
                     status: 'belum_update',
-                    pesan: `Data putaran ${targetJam} untuk tanggal ${isoWib} belum tersedia. Web menampilkan hasil ${jamWeb || 'tanpa jam'} tanggal ${isoWeb}.`,
-                    ...(debug ? {
-                        req_jam: targetJam,
-                        req_tgl: isoWib,
-                        web_jam: jamWeb,
-                        web_tgl: isoWeb
-                    } : {})
+                    pesan: `Data putaran ${targetJam} untuk tanggal ${isoWib} belum tersedia.`
                 };
             }
         });
@@ -1418,10 +2093,9 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
         }
 
         if (!payload) {
-            return res.status(422).json({
-                status: 'error',
-                pesan: 'Gagal menemukan struktur 4D yang memiliki tanggal valid di halaman Toto Macau.',
-                ...(debug ? { url: targetUrl } : {})
+            return res.json({
+                status: 'belum_update',
+                pesan: 'Data putaran Toto Macau hari ini belum ditemukan.'
             });
         }
 
@@ -1429,17 +2103,13 @@ app.get('/api/result/macau/:sesi', async (req, res) => {
             setCache(cacheKey, payload);
         }
 
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
         return res.status(502).json({
             status: 'error',
             pesan: 'Gagal mengakses website Toto Macau.',
-            detail: error.message,
-            ...(debug ? {
-                url: targetUrl,
-                waktu: dapatkanWaktuWIB()
-            } : {})
+            detail: error.message
         });
     }
 });
@@ -1457,12 +2127,13 @@ app.get('/api/result/hk-pools/:market', async (req, res) => {
     }
 
     const namaPasaran = HKPOOLS_LABEL[market];
-    const cacheKey = `hk-pools-${market}`;
+    const isoWib = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+    const cacheKey = `hk-pools-${market}-${isoWib}`;
 
     const hit = getCache(cacheKey);
 
     if (hit) {
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate');
         return res.json(bentukRespons(hit, debug));
     }
 
@@ -1472,47 +2143,105 @@ app.get('/api/result/hk-pools/:market', async (req, res) => {
 
         const hasilLengkap = Boolean(
             payload.tanggal_wib &&
+            isWIBTodayValid(payload.tanggal_wib) &&
             /^\d{4}$/.test(payload.p1 || '') &&
             /^\d{4}$/.test(payload.p2 || '') &&
             /^\d{4}$/.test(payload.p3 || '')
         );
 
         if (!hasilLengkap) {
-            return res.status(503).json({
+            return res.json({
                 status: 'belum_update',
                 pasaran: namaPasaran,
-                tanggal_wib: payload.tanggal_wib,
-                p1: payload.p1,
-                p2: payload.p2,
-                p3: payload.p3,
-                pesan: 'Hasil belum lengkap atau situs masih menampilkan placeholder.',
-                ...(debug ? {
-                    url: HKPOOLS_URL,
-                    market,
-                    judul: cheerio.load(html)('title').text().trim(),
-                    panjang_html: html.length
-                } : {})
+                pesan: 'Hasil HK Pools hari ini belum lengkap atau belum update.'
             });
         }
 
         setCache(cacheKey, payload);
 
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate');
         return res.json(bentukRespons(payload, debug));
     } catch (error) {
-        console.error(`[HK POOLS ${market.toUpperCase()}]`, error.message);
-
         return res.status(502).json({
             status: 'error',
             pasaran: namaPasaran,
             pesan: 'Gagal mengambil atau membaca hasil HK Pools.',
-            ...(debug ? {
-                detail: error.message,
-                url: HKPOOLS_URL,
-                waktu: dapatkanWaktuWIB()
-            } : {})
+            ...(debug ? { detail: error.message, url: HKPOOLS_URL } : {})
         });
     }
+});
+
+// ================= ENDPOINT NEW ZEALAND BULLSEYE =================
+app.get('/api/result/bullseye', async (req, res) => {
+    const debug = req.query.debug === '1';
+
+    try {
+        const payload = await ambilBullseye();
+
+        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+        return res.json(bentukRespons(payload, debug));
+    } catch (error) {
+        // Fallback ke scraper sumber cadangan dari file bot jika API NZ belum update
+        const fallbackRunner = async () => {
+            const controller = new AbortController();
+            const sources = [
+                { url: 'https://togel-online.cc/livedraw/bullseye', selector: 'p.text-gold' },
+                { url: 'https://rankcrack.com/bl.php', selector: 'td.prizenum' }
+            ];
+            const winner = await Promise.any(
+                sources.map(src => scrapeSingleAsianSource('NEW ZEALAND BULLSEYE', src, controller.signal))
+            );
+            controller.abort();
+            return winner;
+        };
+
+        try {
+            const fallbackPayload = await fallbackRunner();
+            return res.json(bentukRespons(fallbackPayload, debug));
+        } catch (fbErr) {
+            return res.json({
+                status: 'belum_update',
+                pasaran: 'NEW ZEALAND BULLSEYE',
+                pesan: error.message
+            });
+        }
+    }
+});
+
+// ================= ENDPOINT 13 PASARAN ASIA & TOGEL =================
+// Mencakup: cambodia, sydney-pools, sydney-lotto, china, japan,
+// singapore-toto, singapore-4d, magnum-4d, pcso, taiwan, taipei,
+// hongkong, hongkong-lotto
+app.get('/api/result/:market', async (req, res) => {
+    const slug = String(req.params.market || '').toLowerCase();
+    const debug = req.query.debug === '1';
+
+    const config = ASIAN_MARKETS[slug];
+
+    if (!config) {
+        return res.status(404).json({
+            status: 'error',
+            pesan: `Pasaran '${slug}' tidak ditemukan.`
+        });
+    }
+
+    const isoWib = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
+    const cacheKey = `asian_${slug}_${isoWib}`;
+
+    const hit = getCache(cacheKey);
+    if (hit) {
+        res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate');
+        return res.json(bentukRespons(hit, debug));
+    }
+
+    const payload = await scrapeAsianMarketFastest(slug);
+
+    if (payload.status === 'sukses') {
+        setCache(cacheKey, payload);
+        res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate');
+    }
+
+    return res.json(bentukRespons(payload, debug));
 });
 
 // ================= ENDPOINT HASIL (LOTTERY USA) =================
@@ -1577,6 +2306,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
                     const payloadNY = {
                         status: 'sukses',
                         pasaran: game === 'midday-win-4' ? 'MIDDAY WIN 4' : 'WIN 4',
+                        tanggal: getTanggalWIB(waktuNY),
                         tanggal_wib: getTanggalWIB(waktuNY),
                         waktu_undian_wib: jamWIB(waktuNY),
                         tanggal_undian_us: iso(hasilNY.tgl),
@@ -1591,7 +2321,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
                 }
             }
         } catch (errorNY) {
-            // Gagal: lanjut ke LotteryUSA (fallback).
+            // Lanjut ke LotteryUSA
         }
     }
 
@@ -1632,6 +2362,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
                         pasaran: game === 'pick-4-midday'
                             ? 'MIDDAY PICK 4'
                             : 'PICK 4',
+                        tanggal: getTanggalWIB(waktuFl),
                         tanggal_wib: getTanggalWIB(waktuFl),
                         waktu_undian_wib: jamWIB(waktuFl),
                         tanggal_undian_us: iso(hasilFl.tgl),
@@ -1646,7 +2377,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
                 }
             }
         } catch (errorFl) {
-            // Gagal: lanjut ke LotteryUSA di bawah.
+            // Lanjut ke LotteryUSA
         }
     }
 
@@ -1677,14 +2408,9 @@ app.get('/api/result/:state/:game', async (req, res) => {
             .first();
 
         if (!bolaPertama.length) {
-            return res.status(422).json({
+            return res.json({
                 status: 'belum_update',
-                pesan: 'Angka hasil tidak ditemukan pada HTML.',
-                ...(debug ? {
-                    url: targetUrl,
-                    judul: $('title').text().trim(),
-                    selector: '.c-game-components [class*="ball"]'
-                } : {})
+                pesan: 'Angka hasil tidak ditemukan pada HTML.'
             });
         }
 
@@ -1699,27 +2425,16 @@ app.get('/api/result/:state/:game', async (req, res) => {
         const tglUndian = parseTanggal(tglRaw, tzNow);
 
         if (!tglUndian) {
-            return res.status(422).json({
-                status: 'error',
-                pesan: 'Tanggal undian tidak ditemukan atau formatnya tidak dikenali.',
-                ...(debug ? {
-                    detail: (tglRaw || '').slice(0, 200),
-                    url: targetUrl,
-                    judul: $('title').text().trim()
-                } : {})
+            return res.json({
+                status: 'belum_update',
+                pesan: 'Tanggal undian tidak ditemukan atau formatnya tidak dikenali.'
             });
         }
 
         if (iso(tglUndian) > iso(tzNow)) {
             return res.json({
                 status: 'belum_update',
-                pesan:
-                    `Tanggal hasil web ${iso(tglUndian)} lebih baru daripada tanggal lokal ${iso(tzNow)} di ${tz}.`,
-                ...(debug ? {
-                    url: targetUrl,
-                    tanggal_web: iso(tglUndian),
-                    tanggal_lokal: iso(tzNow)
-                } : {})
+                pesan: `Tanggal hasil web ${iso(tglUndian)} lebih baru daripada tanggal lokal ${iso(tzNow)} di ${tz}.`
             });
         }
 
@@ -1750,16 +2465,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         if (wibUndian !== wibHariIni) {
             return res.json({
                 status: 'belum_update',
-                pesan:
-                    `Tanggal hasil WIB (${wibUndian}) berbeda dari tanggal WIB hari ini (${wibHariIni}).`,
-                ...(debug ? {
-                    url: targetUrl,
-                    tanggal_undian_us: iso(tglUndian),
-                    tanggal_undian_wib: wibUndian,
-                    tanggal_hari_ini_wib: wibHariIni,
-                    slot_wib: slot || null,
-                    jadwal_lokal: jam || JAM_DEFAULT
-                } : {})
+                pesan: `Tanggal hasil WIB (${wibUndian}) berbeda dari tanggal WIB hari ini (${wibHariIni}).`
             });
         }
 
@@ -1783,14 +2489,9 @@ app.get('/api/result/:state/:game', async (req, res) => {
         angka = angka.slice(0, 4);
 
         if (angka.length !== 4) {
-            return res.status(422).json({
+            return res.json({
                 status: 'belum_update',
-                pesan: `Angka belum lengkap (${angka.length}/4).`,
-                ...(debug ? {
-                    url: targetUrl,
-                    tanggal_dibaca: tglRaw,
-                    angka_ditemukan: angka
-                } : {})
+                pesan: `Angka belum lengkap (${angka.length}/4).`
             });
         }
 
@@ -1800,6 +2501,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         const payload = {
             status: 'sukses',
             pasaran: namaPasaran,
+            tanggal: tglWib,
             tanggal_wib: tglWib,
             waktu_undian_wib: waktuWib,
             tanggal_undian_us: iso(tglUndian),
@@ -1815,158 +2517,7 @@ app.get('/api/result/:state/:game', async (req, res) => {
         return res.status(502).json({
             status: 'error',
             pesan: 'Gagal mengambil data dari target.',
-            detail: error.message,
-            ...(debug ? {
-                url: targetUrl,
-                waktu: dapatkanWaktuWIB()
-            } : {})
-        });
-    }
-});
-// ================= ENDPOINT NEW ZEALAND BULLSEYE =================
-
-app.get('/api/result/bullseye', async (req, res) => {
-    const debug = req.query.debug === '1';
-
-    try {
-        const payload = await ambilBullseye();
-
-        res.setHeader(
-            'Cache-Control',
-            's-maxage=60, stale-while-revalidate'
-        );
-
-        return res.json(
-            debug
-                ? payload
-                : {
-                    status: payload.status,
-                    pasaran: payload.pasaran,
-                    tanggal_wib: payload.tanggal_wib,
-                    angka_keluar: payload.angka_keluar
-                }
-        );
-    } catch (error) {
-        return res.status(502).json({
-            status: 'error',
-            pasaran: 'NEW ZEALAND BULLSEYE',
-            pesan: 'Gagal mengambil hasil New Zealand Bullseye.',
-            ...(debug ? {
-                detail: error.message,
-                url: BULLSEYE_API,
-                waktu: dapatkanWaktuWIB()
-            } : {})
-        });
-    }
-});
-
-// ================= TAIWAN =================
-const TAIWAN_API = 'https://livedrawhijau.org/taiwan/update_taiwan';
-const TAIWAN_FIELDS = ['prize1', 'grand', 'regular', 'second', 'third', 'fourth'];
-
-app.get('/api/result/taiwan', async (req, res) => {
-    const debug = req.query.debug === '1';
-    const field = TAIWAN_FIELDS.includes(req.query.field)
-        ? req.query.field
-        : 'prize1';
-
-    try {
-        const respons = await axios.get(TAIWAN_API, {
-            headers: {
-                ...getRandomHeaders(),
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Referer': 'https://livedrawhijau.org/taiwan/'
-            },
-            params: { _: Date.now() },
-            timeout: 8000
-        });
-
-        const d = Array.isArray(respons.data) ? respons.data[0] : respons.data;
-
-        if (!d || typeof d !== 'object' || !d[field]) {
-            return res.status(422).json({
-                status: 'error',
-                pasaran: 'TAIWAN',
-                pesan: 'Format respons sumber Taiwan tidak dikenali.'
-            });
-        }
-
-        const m = String(d.tanggal || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-        if (!m || !tanggalValid(d.tanggal)) {
-            return res.status(422).json({
-                status: 'error',
-                pasaran: 'TAIWAN',
-                pesan: 'Tanggal pada sumber Taiwan tidak valid.'
-            });
-        }
-
-        // Undian Taiwan sekitar 20:35 WIB. Tolak sebelum 20:30 WIB.
-        const sekarangWIB = new Intl.DateTimeFormat('en-GB', {
-            timeZone: 'Asia/Jakarta',
-            hour: '2-digit',
-            minute: '2-digit',
-            hourCycle: 'h23'
-        }).formatToParts(new Date());
-
-        const menitWIB =
-            Number(sekarangWIB.find(p => p.type === 'hour').value) * 60 +
-            Number(sekarangWIB.find(p => p.type === 'minute').value);
-
-        if (menitWIB < 20 * 60 + 30) {
-            return res.json({
-                status: 'belum_update',
-                pesan: 'Undian Taiwan belum dimulai (sekitar 20:35 WIB).'
-            });
-        }
-
-        const isoHariIni = iso(partsInTZ(new Date(), 'Asia/Jakarta'));
-
-        if (d.tanggal !== isoHariIni) {
-            return res.json({
-                status: 'belum_update',
-                pesan: `Hasil Taiwan belum update (sumber: ${d.tanggal}, hari ini WIB: ${isoHariIni}).`,
-                ...(debug ? { draw_id: d.id } : {})
-            });
-        }
-
-        const angka = String(d[field]).replace(/\D/g, '');
-
-        if (angka.length < 4) {
-            return res.status(422).json({
-                status: 'belum_update',
-                pasaran: 'TAIWAN',
-                pesan: 'Angka Taiwan belum lengkap.'
-            });
-        }
-
-        const tglObj = new Date(Date.UTC(
-            Number(m[1]), Number(m[2]) - 1, Number(m[3]), 5, 0, 0
-        ));
-
-        const payload = {
-            status: 'sukses',
-            pasaran: 'TAIWAN',
-            tanggal_wib: getTanggalWIB(tglObj),
-            angka_keluar: angka.slice(-4),
-            ...(debug ? { draw_id: d.id, field, angka_penuh: angka } : {})
-        };
-
-        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
-        return res.json(bentukRespons(payload, debug));
-    } catch (error) {
-        return res.status(502).json({
-            status: 'error',
-            pasaran: 'TAIWAN',
-            pesan: 'Gagal mengambil hasil Taiwan.',
-            ...(debug ? {
-                detail: error.response
-                    ? `Sumber membalas HTTP ${error.response.status}`
-                    : error.message,
-                url: TAIWAN_API,
-                waktu: dapatkanWaktuWIB()
-            } : {})
+            detail: error.message
         });
     }
 });
@@ -2078,7 +2629,6 @@ app.get('/api/markets', async (req, res) => {
 });
 
 // ================= SETUP SERVER / EXPORT =================
-
 if (process.env.NODE_ENV !== 'production') {
     const PORT = process.env.PORT || 3000;
 
