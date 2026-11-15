@@ -2103,7 +2103,28 @@ app.get('/api/markets', async (req, res) => {
 // ==========================================================
 const https = require('https');
 
-const httpsAgentLonggar = new https.Agent({ rejectUnauthorized: false });
+const httpsAgentLonggar = new https.Agent({
+    rejectUnauthorized: false,
+    keepAlive: true,
+    minVersion: 'TLSv1.2',
+    ciphers: [
+        'TLS_AES_128_GCM_SHA256',
+        'TLS_AES_256_GCM_SHA384',
+        'TLS_CHACHA20_POLY1305_SHA256',
+        'ECDHE-ECDSA-AES128-GCM-SHA256',
+        'ECDHE-RSA-AES128-GCM-SHA256',
+        'ECDHE-ECDSA-AES256-GCM-SHA384',
+        'ECDHE-RSA-AES256-GCM-SHA384',
+        'ECDHE-ECDSA-CHACHA20-POLY1305',
+        'ECDHE-RSA-CHACHA20-POLY1305',
+        'ECDHE-RSA-AES128-SHA',
+        'ECDHE-RSA-AES256-SHA',
+        'AES128-GCM-SHA256',
+        'AES256-GCM-SHA384',
+        'AES128-SHA',
+        'AES256-SHA'
+    ].join(':')
+});
 
 const BULAN_ID_X = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -2391,42 +2412,88 @@ function ekstrakTambahan($, selector, src) {
 }
 
 async function ambilSumberTambahan(src, signal) {
-    const url =
-        src.url + (src.url.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const isApiJson = Boolean(src.hijau);
 
-    const headers = {
-        'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Referer': src.url,
-        'Accept':
-            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/json',
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-        'Connection': 'keep-alive',
-        'Sec-Ch-Ua':
-            '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"'
-    };
+    // Hindari penambahan query ?_=Date.now() pada halaman HTML agar tidak ditolak WAF (403).
+    const url = isApiJson
+        ? src.url + (src.url.includes('?') ? '&' : '?') + '_=' + Date.now()
+        : src.url;
 
-    if (src.hijau) {
-        headers['X-Requested-With'] = 'XMLHttpRequest';
-        headers['Referer'] =
-            'https://livedrawhijau.org/' +
-            new URL(src.url).pathname.split('/')[1] + '/';
+    const headers = isApiJson
+        ? {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer':
+                'https://livedrawhijau.org/' +
+                new URL(src.url).pathname.split('/')[1] +
+                '/',
+            'Sec-Ch-Ua':
+                '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin'
+        }
+        : {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Accept':
+                'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'max-age=0',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Ch-Ua':
+                '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1'
+        };
+
+    let data = '';
+
+    try {
+        const res = await axios.get(url, {
+            headers,
+            timeout: 10000,
+            responseType: 'text',
+            httpsAgent: httpsAgentLonggar,
+            signal,
+            validateStatus: s => s >= 200 && s < 300
+        });
+
+        data = res.data;
+    } catch (axiosErr) {
+        // Fallback ke native fetch (Undici) jika mendapat 403 dari fingerprint TLS/HTTP axios
+        if (
+            axiosErr?.response?.status === 403 &&
+            typeof fetch === 'function'
+        ) {
+            const fetchRes = await fetch(url, {
+                headers: {
+                    ...headers,
+                    'Referer': 'https://www.google.com/',
+                    'Sec-Fetch-Site': 'cross-site'
+                },
+                signal
+            });
+
+            if (!fetchRes.ok) {
+                throw axiosErr;
+            }
+
+            data = await fetchRes.text();
+        } else {
+            throw axiosErr;
+        }
     }
-
-    const res = await axios.get(url, {
-        headers,
-        timeout: 10000,
-        responseType: 'text',
-        httpsAgent: httpsAgentLonggar,
-        signal,
-        validateStatus: s => s >= 200 && s < 300
-    });
-
-    const data = res.data;
 
     if (typeof data !== 'string' || data.length < 2) {
         throw new Error('respons kosong');
